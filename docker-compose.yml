@@ -7,10 +7,10 @@ services:
     # To expose it on your network/internet, bind wider here AND set API_KEY
     # below explicitly (otherwise a fresh key is generated per container).
     ports:
-      - "127.0.0.1:4000:4000"
+      - "4000:4000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - API_KEY=${API_KEY:-}
+      - API_KEY=BreakoutProp2026SecretKey
       - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
       - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3000}
       - DATA_DIR=/app/data
@@ -27,10 +27,11 @@ services:
       context: .
       dockerfile: web/Dockerfile
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     environment:
+      - HOST=0.0.0.0
       - API_URL=http://api:4000
-      - API_KEY=${API_KEY:-}
+      - API_KEY=BreakoutProp2026SecretKey
       - API_KEY_FILE=/app/data/.api-key
     volumes:
       - terminal-data:/app/data:ro
