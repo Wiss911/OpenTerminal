@@ -9,6 +9,7 @@ import * as ecb from "../providers/ecb.js";
 import * as tradingview from "../providers/tradingview.js";
 import * as coingecko from "../providers/coingecko.js";
 import * as binance from "../providers/binance.js";
+import * as hyperliquid from "../providers/hyperliquid.js";
 import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
@@ -124,6 +125,15 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   const fetched = new Map<string, yahoo.Quote>();
   let remaining = missing;
 
+  const hyperliquidSymbols = remaining.filter((s) => hyperliquid.parseSymbol(s));
+  if (hyperliquidSymbols.length > 0) {
+    const results = await Promise.allSettled(hyperliquidSymbols.map((s) => hyperliquid.quote(s)));
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled") fetched.set(hyperliquidSymbols[i], r.value);
+    });
+    remaining = remaining.filter((s) => !fetched.has(s));
+  }
+
   const cryptoSymbols = remaining.filter((s) => binance.CRYPTO_SYMBOLS.has(s));
   if (cryptoSymbols.length > 0) {
     const results = await Promise.allSettled(cryptoSymbols.map((s) => binance.quote(s)));
@@ -178,7 +188,7 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   // Fill gaps Nasdaq's quote endpoints don't cover (open, P/E, EPS, dividend
   // yield, beta, shares outstanding) from TradingView's public scanner API,
   // in one batched request for every quote that resolved an exchange.
-  const needsFundamentals = [...fetched.values()].filter((q) => q.exchange && q.pe === null);
+  const needsFundamentals = [...fetched.values()].filter((q) => q.exchange && q.pe === null && q.source !== "hyperliquid");
   if (needsFundamentals.length > 0) {
     try {
       const fundamentals = await tradingview.scanFundamentals(
@@ -232,7 +242,9 @@ marketRouter.get("/history/:symbol", async (req, res) => {
   const rangeKey = String(req.query.range ?? "6M");
   try {
     const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
-      binance.CRYPTO_SYMBOLS.has(symbol)
+      hyperliquid.parseSymbol(symbol)
+        ? hyperliquid.history(symbol, rangeKey)
+        : binance.CRYPTO_SYMBOLS.has(symbol)
         ? binance.history(symbol, rangeKey)
         : isVix(symbol)
         ? vixHistory(rangeKey)
@@ -360,6 +372,36 @@ marketRouter.get("/crypto", async (req, res) => {
       ])
     );
     res.json(data);
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- Hyperliquid perpetual markets (read-only public info endpoint) ----
+
+marketRouter.get("/crypto/hyperliquid/dexes", async (_req, res) => {
+  try {
+    res.json(await cached("hyperliquid:dexes", 300_000, () => hyperliquid.dexes()));
+  } catch (err) {
+    fail(_req, res, err);
+  }
+});
+
+marketRouter.get("/crypto/hyperliquid", async (req, res) => {
+  const dex = String(req.query.dex ?? "").trim();
+  if (dex && !/^[a-z0-9_-]{1,32}$/i.test(dex)) return res.status(400).json({ error: "invalid Hyperliquid DEX" });
+  try {
+    res.json(await cached(`hyperliquid:markets:${dex}`, 60_000, () => hyperliquid.markets(dex)));
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+marketRouter.get("/crypto/hyperliquid/orderbook/:symbol", async (req, res) => {
+  const symbol = `HL:${req.params.symbol}`;
+  if (!hyperliquid.parseSymbol(symbol)) return res.status(400).json({ error: "invalid Hyperliquid symbol" });
+  try {
+    res.json(await cached(`hyperliquid:orderbook:${symbol}`, 3_000, () => hyperliquid.orderBook(symbol)));
   } catch (err) {
     fail(req, res, err);
   }
