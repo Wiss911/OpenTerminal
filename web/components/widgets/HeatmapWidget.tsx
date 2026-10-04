@@ -12,11 +12,18 @@ export default function HeatmapWidget() {
   const ref = useRef<HTMLDivElement>(null);
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const [market, setMarket] = useState<"us" | "eu">("us");
+  const [themeRevision, setThemeRevision] = useState(0);
   const { data, error } = useQuery({
     queryKey: ["heatmap", market],
     queryFn: () => apiGet<Cell[]>(`/api/heatmap?market=${market}`),
     refetchInterval: 3_000,
   });
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setThemeRevision((revision) => revision + 1));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -29,6 +36,13 @@ export default function HeatmapWidget() {
       el.innerHTML = "";
 
       const valid = data.filter((d) => d.marketCap && d.changePercent !== null);
+      const css = getComputedStyle(document.documentElement);
+      const themeColor = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+      const neutral = themeColor("--hover", "#1a1a1a");
+      const positive = themeColor("--up", "#00c853");
+      const negative = themeColor("--down", "#ff3d3d");
+      const label = themeColor("--text-dim", "#808080");
+      const text = themeColor("--text", "#ffffff");
       type Node = { name: string; children?: Node[]; data?: Cell };
       const root = d3
         .hierarchy<Node>({
@@ -46,8 +60,8 @@ export default function HeatmapWidget() {
       const color = (chg: number) => {
         const clamped = Math.max(-3, Math.min(3, chg));
         return clamped >= 0
-          ? d3.interpolateRgb("#1a1a1a", "#00c853")(clamped / 3)
-          : d3.interpolateRgb("#1a1a1a", "#ff3d3d")(-clamped / 3);
+          ? d3.interpolateRgb(neutral, positive)(clamped / 3)
+          : d3.interpolateRgb(neutral, negative)(-clamped / 3);
       };
 
       const svg = d3.select(el).append("svg").attr("width", width).attr("height", height);
@@ -76,7 +90,7 @@ export default function HeatmapWidget() {
         .attr("x", (d: any) => d.x0 + 3)
         .attr("y", (d: any) => d.y0 + 9)
         .attr("clip-path", (d: any) => `url(#${sectorClipId(d.data.name)})`)
-        .attr("fill", "#808080")
+        .attr("fill", label)
         .attr("font-size", 8)
         .text((d: any) => d.data.name.toUpperCase());
 
@@ -102,7 +116,7 @@ export default function HeatmapWidget() {
         .append("text")
         .attr("x", 3)
         .attr("y", 11)
-        .attr("fill", "#fff")
+        .attr("fill", text)
         .attr("font-size", 9)
         .attr("font-weight", "bold")
         .text((d: any) => d.data.data.symbol);
@@ -112,7 +126,7 @@ export default function HeatmapWidget() {
         .append("text")
         .attr("x", 3)
         .attr("y", 22)
-        .attr("fill", "#ddd")
+        .attr("fill", text)
         .attr("font-size", 8)
         .text((d: any) => `${d.data.data.changePercent >= 0 ? "+" : ""}${d.data.data.changePercent.toFixed(2)}%`);
     };
@@ -121,7 +135,7 @@ export default function HeatmapWidget() {
     const obs = new ResizeObserver(render);
     obs.observe(el);
     return () => obs.disconnect();
-  }, [data, setActiveSymbol]);
+  }, [data, setActiveSymbol, themeRevision]);
 
   return (
     <div className="flex flex-col h-full">

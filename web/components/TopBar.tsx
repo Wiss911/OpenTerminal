@@ -19,20 +19,46 @@ function Clock({ tz, label }: { tz: string; label: string }) {
     return () => clearInterval(t);
   }, []);
   if (!now) return null;
+  const localTime = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(now);
+  const zoneName = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    timeZoneName: "short",
+  }).formatToParts(now).find((part) => part.type === "timeZoneName")?.value;
+  const localDate = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(now);
   return (
-    <span className="dim">
+    <span className="dim" title={`${localDate} · ${tz}`} aria-label={`${label} ${localTime} ${zoneName ?? tz}`}>
       {label}{" "}
       <span className="text-[var(--text)]">
-        {now.toLocaleTimeString("en-GB", { timeZone: tz, hour12: false })}
+        {localTime}
       </span>
+      <span className="ml-1 text-[9px]">{zoneName}</span>
     </span>
   );
 }
 
 function marketStateNY(): { label: string; open: boolean } {
-  const ny = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const day = ny.getDay();
-  const mins = ny.getHours() * 60 + ny.getMinutes();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+  const weekday = part("weekday");
+  const day = weekday === "Sun" ? 0 : weekday === "Mon" ? 1 : weekday === "Tue" ? 2 : weekday === "Wed" ? 3 : weekday === "Thu" ? 4 : weekday === "Fri" ? 5 : 6;
+  const mins = Number(part("hour")) * 60 + Number(part("minute"));
   const open = day >= 1 && day <= 5 && mins >= 570 && mins < 960; // 09:30–16:00
   return { label: open ? "NYSE OPEN" : "NYSE CLOSED", open };
 }
@@ -49,7 +75,6 @@ export default function TopBar() {
   }, [theme]);
   const changeTheme = (next: string) => {
     setTheme(next);
-    document.documentElement.dataset.theme = next;
     localStorage.setItem("openterminal-theme", next);
   };
   const { data: status } = useQuery({
@@ -82,9 +107,11 @@ export default function TopBar() {
           : "connecting…"}
       </span>
       <select aria-label="Dashboard theme" value={theme} onChange={(e) => changeTheme(e.target.value)} title="Dashboard color theme">
-        <option value="terminal">Amber</option>
-        <option value="ocean">Ocean</option>
-        <option value="violet">Violet</option>
+        <option value="terminal">Amber Terminal</option>
+        <option value="ocean">Ocean Blue</option>
+        <option value="violet">Violet Night</option>
+        <option value="graphite">Graphite Green</option>
+        <option value="paper">Paper Light</option>
       </select>
       <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
     </header>

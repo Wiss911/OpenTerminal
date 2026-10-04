@@ -69,14 +69,14 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
       <div className="dim text-[11px] mb-2 truncate">{data.name}</div>
       <div className="grid grid-cols-2 gap-x-4">
         {rows.map(([label, value]) => (
-          <div key={label} className="flex justify-between border-b border-[#161616] py-0.5">
+          <div key={label} className="flex justify-between border-b border-[var(--row-border)] py-0.5">
             <span className="dim">{label}</span>
             <span>{value}</span>
           </div>
         ))}
       </div>
       {isHyperliquid && (
-        <div className="mt-3 border-t border-[#262626] pt-2">
+        <div className="mt-3 border-t border-[var(--border)] pt-2">
           <div className="flex justify-between dim text-[10px] mb-1">
             <span>Hyperliquid Order Book · top 5</span>
             <span>{orderBookError ? "Unavailable" : "Live · 3s"}</span>

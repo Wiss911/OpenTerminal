@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: dark;
   --bg: #000000;
   --panel: #0a0a0a;
   --panel-2: #111111;
@@ -12,6 +13,19 @@
   --text: #d9d9d9;
   --text-dim: #808080;
   --hover: #1a1a1a;
+  --row-border: #161616;
+  --scroll-thumb: #333333;
+  --selection: #1f1a10;
+  --call-bg: #0d2010;
+  --put-bg: #200d0d;
+  --chart-grid: #1a1a1a;
+  --chart-text: #808080;
+  --chart-volume-up: rgba(0, 200, 83, 0.4);
+  --chart-volume-down: rgba(255, 61, 61, 0.4);
+  --chart-volume-up-strong: rgba(0, 200, 83, 0.6);
+  --chart-volume-down-strong: rgba(255, 61, 61, 0.6);
+  --chart-accent-soft: rgba(255, 153, 0, 0.25);
+  --chart-accent-transparent: rgba(255, 153, 0, 0);
 }
 
 :root[data-theme="ocean"] {
@@ -26,6 +40,19 @@
   --text: #d9edf2;
   --text-dim: #82a7b2;
   --hover: #142d3b;
+  --row-border: #132b38;
+  --scroll-thumb: #315363;
+  --selection: #15303d;
+  --call-bg: #0c3027;
+  --put-bg: #351922;
+  --chart-grid: #15303d;
+  --chart-text: #82a7b2;
+  --chart-volume-up: rgba(69, 214, 162, 0.4);
+  --chart-volume-down: rgba(255, 107, 120, 0.4);
+  --chart-volume-up-strong: rgba(69, 214, 162, 0.6);
+  --chart-volume-down-strong: rgba(255, 107, 120, 0.6);
+  --chart-accent-soft: rgba(66, 198, 217, 0.25);
+  --chart-accent-transparent: rgba(66, 198, 217, 0);
 }
 
 :root[data-theme="violet"] {
@@ -40,6 +67,75 @@
   --text: #e9e1f4;
   --text-dim: #a399b5;
   --hover: #241e33;
+  --row-border: #211b2c;
+  --scroll-thumb: #514565;
+  --selection: #2a2039;
+  --call-bg: #132a23;
+  --put-bg: #321c2a;
+  --chart-grid: #241e33;
+  --chart-text: #a399b5;
+  --chart-volume-up: rgba(101, 216, 173, 0.4);
+  --chart-volume-down: rgba(255, 113, 138, 0.4);
+  --chart-volume-up-strong: rgba(101, 216, 173, 0.6);
+  --chart-volume-down-strong: rgba(255, 113, 138, 0.6);
+  --chart-accent-soft: rgba(196, 161, 255, 0.25);
+  --chart-accent-transparent: rgba(196, 161, 255, 0);
+}
+
+:root[data-theme="graphite"] {
+  color-scheme: dark;
+  --bg: #101312;
+  --panel: #171c1a;
+  --panel-2: #202724;
+  --border: #35413a;
+  --amber: #c3ee79;
+  --amber-dim: #789b45;
+  --up: #60d5a2;
+  --down: #ff7777;
+  --text: #e5ebe6;
+  --text-dim: #99a89e;
+  --hover: #29322d;
+  --row-border: #232b27;
+  --scroll-thumb: #46544b;
+  --selection: #29362c;
+  --call-bg: #183229;
+  --put-bg: #392326;
+  --chart-grid: #29332d;
+  --chart-text: #99a89e;
+  --chart-volume-up: rgba(96, 213, 162, 0.4);
+  --chart-volume-down: rgba(255, 119, 119, 0.4);
+  --chart-volume-up-strong: rgba(96, 213, 162, 0.6);
+  --chart-volume-down-strong: rgba(255, 119, 119, 0.6);
+  --chart-accent-soft: rgba(195, 238, 121, 0.25);
+  --chart-accent-transparent: rgba(195, 238, 121, 0);
+}
+
+:root[data-theme="paper"] {
+  color-scheme: light;
+  --bg: #e9e7e0;
+  --panel: #f7f6f1;
+  --panel-2: #eeece5;
+  --border: #cfcdc3;
+  --amber: #a84a1b;
+  --amber-dim: #bd7957;
+  --up: #18794e;
+  --down: #bd3535;
+  --text: #242722;
+  --text-dim: #686b65;
+  --hover: #e5e2d9;
+  --row-border: #e3e1d9;
+  --scroll-thumb: #c1beb3;
+  --selection: #f0e1d7;
+  --call-bg: #e0eee2;
+  --put-bg: #f4e1df;
+  --chart-grid: #dedbd1;
+  --chart-text: #686b65;
+  --chart-volume-up: rgba(24, 121, 78, 0.34);
+  --chart-volume-down: rgba(189, 53, 53, 0.34);
+  --chart-volume-up-strong: rgba(24, 121, 78, 0.55);
+  --chart-volume-down-strong: rgba(189, 53, 53, 0.55);
+  --chart-accent-soft: rgba(168, 74, 27, 0.22);
+  --chart-accent-transparent: rgba(168, 74, 27, 0);
 }
 
 html,
@@ -59,7 +155,7 @@ body {
   background: var(--panel);
 }
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: var(--scroll-thumb);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--amber-dim);
@@ -127,7 +223,7 @@ table.data-table td:first-child {
 table.data-table td {
   text-align: right;
   padding: 2px 6px;
-  border-bottom: 1px solid #161616;
+  border-bottom: 1px solid var(--row-border);
   white-space: nowrap;
 }
 table.data-table tbody tr:hover {
@@ -179,4 +275,8 @@ button.term-btn.active {
 }
 .react-grid-item > .react-resizable-handle::after {
   border-color: var(--amber-dim) !important;
+}
+
+.chart-legend {
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
 }

@@ -144,13 +144,29 @@ export default function TvWidget() {
         ) : (
           <video ref={videoRef} className="w-full h-full" autoPlay muted controls playsInline />
         )}
-        {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center dim bg-black">
-            <span>{error}</span>
-            {channel.type === "youtube" && <div className="flex gap-3 flex-wrap justify-center">
-              <button className="term-btn active" onClick={() => window.open(channel.youtubeUrl, "cryptoface-live", "popup=yes,width=900,height=600,resizable=yes,scrollbars=yes")}>Im Mini-Player öffnen</button>
-              <a className="amber underline" href={channel.youtubeUrl} target="_blank" rel="noreferrer">Auf YouTube öffnen</a>
-            </div>}
+        {error && channel.type === "youtube" && (
+          <div className="absolute inset-0 flex items-center justify-center p-4 bg-[var(--bg)]" role="status" aria-live="polite">
+            <div className="flex max-w-lg flex-col items-center gap-3 border border-[var(--border)] bg-[var(--panel)] px-6 py-7 text-center shadow-xl">
+              <div className="flex items-center gap-2 text-[var(--text-dim)]">
+                <svg aria-hidden="true" viewBox="0 0 48 34" className="h-7 w-10" fill="none">
+                  <rect x="1" y="1" width="46" height="32" rx="8" fill="#ff0033" />
+                  <path d="M20 10.5L31 17L20 23.5V10.5Z" fill="white" />
+                </svg>
+                <span className="text-[10px] font-bold uppercase tracking-[0.18em]">Live TV · YouTube</span>
+              </div>
+              <p className="text-sm text-[var(--text)]">{error}</p>
+              <p className="max-w-sm text-[11px] text-[var(--text-dim)]">
+                YouTube erlaubt bei manchen Streams keine Wiedergabe in eingebetteten Playern. Die Ansicht bleibt hier im Dashboard; den Stream kannst du direkt auf YouTube öffnen.
+              </p>
+              <a className="term-btn active mt-1" href={channel.youtubeUrl} target="_blank" rel="noreferrer">
+                Auf YouTube ansehen ↗
+              </a>
+            </div>
+          </div>
+        )}
+        {error && channel.type !== "youtube" && (
+          <div className="absolute inset-0 flex items-center justify-center p-4 text-center dim bg-[var(--bg)]" role="status">
+            {error}
           </div>
         )}
       </div>

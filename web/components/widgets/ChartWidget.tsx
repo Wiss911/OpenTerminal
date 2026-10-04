@@ -39,19 +39,42 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const [active, setActive] = useState<Set<Indicator>>(new Set(["SMA20"]));
   const [legend, setLegend] = useState<Candle | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [chartBackground, setChartBackground] = useState("#0a0a0a");
+  const [chartBackground, setChartBackground] = useState<string | null>(null);
+  const [themePanel, setThemePanel] = useState("#0a0a0a");
+  const [themeRevision, setThemeRevision] = useState(0);
   const [rightOffset, setRightOffset] = useState(5);
   const [settingsReady, setSettingsReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const settingsKey = `openterminal:chart-settings:${widget.id}`;
+  const chartSettingsRef = useRef({ chartBackground, themePanel, rightOffset });
+
+  useEffect(() => {
+    let currentTheme = document.documentElement.dataset.theme;
+    let hasSynced = false;
+    const updateTheme = () => {
+      const nextTheme = document.documentElement.dataset.theme;
+      if (hasSynced && nextTheme === currentTheme) return;
+      hasSynced = true;
+      currentTheme = nextTheme;
+      setThemePanel(getComputedStyle(document.documentElement).getPropertyValue("--panel").trim() || "#0a0a0a");
+      setThemeRevision((revision) => revision + 1);
+    };
+    const initialFrame = requestAnimationFrame(updateTheme);
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      cancelAnimationFrame(initialFrame);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(settingsKey);
       if (saved) {
         const parsed = JSON.parse(saved) as { background?: string; rightOffset?: number };
-        if (typeof parsed.background === "string" && /^#[0-9a-f]{6}$/i.test(parsed.background)) setChartBackground(parsed.background);
+        if (typeof parsed.background === "string" && /^#[0-9a-f]{6}$/i.test(parsed.background) && parsed.background.toLowerCase() !== "#0a0a0a") setChartBackground(parsed.background);
         if (typeof parsed.rightOffset === "number" && Number.isFinite(parsed.rightOffset)) setRightOffset(Math.max(0, Math.min(20, parsed.rightOffset)));
       }
     } catch { /* Keep usable defaults when local settings are unavailable. */ }
@@ -60,9 +83,13 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
   useEffect(() => {
     if (!settingsReady) return;
-    try { localStorage.setItem(settingsKey, JSON.stringify({ background: chartBackground, rightOffset })); }
+    try { localStorage.setItem(settingsKey, JSON.stringify({ ...(chartBackground ? { background: chartBackground } : {}), rightOffset })); }
     catch { /* Settings remain active for this session when storage is unavailable. */ }
   }, [chartBackground, rightOffset, settingsKey, settingsReady]);
+
+  useEffect(() => {
+    chartSettingsRef.current = { chartBackground, themePanel, rightOffset };
+  }, [chartBackground, themePanel, rightOffset]);
 
   const { data: candles, error } = useQuery({
     queryKey: ["history", symbol, range],
@@ -153,21 +180,34 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const el = containerRef.current;
     if (!el || !candles || candles.length === 0) return;
 
+    const css = getComputedStyle(document.documentElement);
+    const cssColor = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+    const accent = cssColor("--amber", "#ff9900");
+    const upColor = cssColor("--up", "#00c853");
+    const downColor = cssColor("--down", "#ff3d3d");
+    const chartText = cssColor("--chart-text", "#808080");
+    const chartGrid = cssColor("--chart-grid", "#1a1a1a");
+    const chartBorder = cssColor("--border", "#262626");
+    const volumeUp = cssColor("--chart-volume-up", "rgba(0,200,83,0.4)");
+    const volumeDown = cssColor("--chart-volume-down", "rgba(255,61,61,0.4)");
+    const volumeUpStrong = cssColor("--chart-volume-up-strong", "rgba(0,200,83,0.6)");
+    const volumeDownStrong = cssColor("--chart-volume-down-strong", "rgba(255,61,61,0.6)");
+    const accentSoft = cssColor("--chart-accent-soft", "rgba(255,153,0,0.25)");
+    const accentTransparent = cssColor("--chart-accent-transparent", "rgba(255,153,0,0)");
+    const chartSettings = chartSettingsRef.current;
+
     const chart = createChart(el, {
-      layout: { background: { color: chartBackground }, textColor: "#808080", fontSize: 10, attributionLogo: false },
-      grid: { vertLines: { color: "#1a1a1a" }, horzLines: { color: "#1a1a1a" } },
+      layout: { background: { color: chartSettings.chartBackground ?? chartSettings.themePanel }, textColor: chartText, fontSize: 10, attributionLogo: false },
+      grid: { vertLines: { color: chartGrid }, horzLines: { color: chartGrid } },
       crosshair: { mode: 0 },
-      timeScale: { borderColor: "#262626", timeVisible: range === "1D" || range === "5D", rightOffset },
-      rightPriceScale: { borderColor: "#262626" },
+      timeScale: { borderColor: chartBorder, timeVisible: range === "1D" || range === "5D", rightOffset: chartSettings.rightOffset },
+      rightPriceScale: { borderColor: chartBorder },
       autoSize: true,
       // Mouse-wheel is left free for page scrolling — zoom via drag, pinch, or the range buttons instead.
       handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
       handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true },
     });
     chartRef.current = chart;
-
-    const upColor = "#00c853";
-    const downColor = "#ff3d3d";
 
     if (chartType === "candles") {
       chart
@@ -182,11 +222,11 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
         .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
     } else if (chartType === "line") {
       chart
-        .addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 })
+        .addSeries(LineSeries, { color: accent, lineWidth: 1 })
         .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     } else {
       chart
-        .addSeries(AreaSeries, { lineColor: "#ff9900", topColor: "rgba(255,153,0,0.25)", bottomColor: "rgba(255,153,0,0)" })
+        .addSeries(AreaSeries, { lineColor: accent, topColor: accentSoft, bottomColor: accentTransparent })
         .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     }
 
@@ -194,7 +234,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" } });
     vol.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     vol.setData(
-      candles.map((c) => ({ time: ts(c.time), value: c.volume, color: c.close >= c.open ? "rgba(0,200,83,0.4)" : "rgba(255,61,61,0.4)" }))
+      candles.map((c) => ({ time: ts(c.time), value: c.volume, color: c.close >= c.open ? volumeUp : volumeDown }))
     );
 
     const overlay = (points: Point[], color: string) =>
@@ -207,9 +247,9 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (indicatorData?.EMA20) overlay(indicatorData.EMA20, INDICATOR_COLOR.EMA20);
     if (indicatorData?.VWAP) overlay(indicatorData.VWAP, INDICATOR_COLOR.VWAP);
     if (indicatorData?.BOLL) {
-      overlay(indicatorData.BOLL.upper, "rgba(255,153,0,0.5)");
-      overlay(indicatorData.BOLL.middle, "rgba(255,153,0,0.8)");
-      overlay(indicatorData.BOLL.lower, "rgba(255,153,0,0.5)");
+      overlay(indicatorData.BOLL.upper, accentSoft);
+      overlay(indicatorData.BOLL.middle, accent);
+      overlay(indicatorData.BOLL.lower, accentSoft);
     }
 
     let paneIdx = 1;
@@ -220,13 +260,13 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (indicatorData?.MACD) {
       const m = indicatorData.MACD;
       const pane = paneIdx++;
-      chart.addSeries(HistogramSeries, { color: "#4fc3f7" }, pane).setData(
-        m.histogram.map((p) => ({ time: ts(p.time), value: p.value, color: p.value >= 0 ? "rgba(0,200,83,0.6)" : "rgba(255,61,61,0.6)" }))
+      chart.addSeries(HistogramSeries, { color: accent }, pane).setData(
+        m.histogram.map((p) => ({ time: ts(p.time), value: p.value, color: p.value >= 0 ? volumeUpStrong : volumeDownStrong }))
       );
-      chart.addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 }, pane).setData(
+      chart.addSeries(LineSeries, { color: accent, lineWidth: 1 }, pane).setData(
         m.macd.map((p) => ({ time: ts(p.time), value: p.value }))
       );
-      chart.addSeries(LineSeries, { color: "#ffffff", lineWidth: 1 }, pane).setData(
+      chart.addSeries(LineSeries, { color: chartText, lineWidth: 1 }, pane).setData(
         m.signal.map((p) => ({ time: ts(p.time), value: p.value }))
       );
     }
@@ -245,14 +285,14 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, chartType, indicatorData, range, byTime]);
+  }, [candles, chartType, indicatorData, range, byTime, themeRevision]);
 
   useEffect(() => {
     chartRef.current?.applyOptions({
-      layout: { background: { color: chartBackground } },
+      layout: { background: { color: chartBackground ?? themePanel } },
       timeScale: { rightOffset },
     });
-  }, [chartBackground, rightOffset]);
+  }, [chartBackground, rightOffset, themePanel]);
 
   const toggleIndicator = (ind: Indicator) =>
     setActive((prev) => {
@@ -287,10 +327,10 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
         </button>
       </div>
       {settingsOpen && (
-        <div className="flex gap-4 items-center flex-wrap px-2 py-1 border-b border-[#262626] text-xs shrink-0">
+        <div className="flex gap-4 items-center flex-wrap px-2 py-1 border-b border-[var(--border)] text-xs shrink-0">
           <label className="flex items-center gap-2">Background
-            <input type="color" value={chartBackground} onChange={(e) => setChartBackground(e.target.value)} className="w-7 h-6 p-0 border-0 bg-transparent" />
-            <span className="dim">{chartBackground}</span>
+            <input type="color" value={chartBackground ?? themePanel} onChange={(e) => setChartBackground(e.target.value)} className="w-7 h-6 p-0 border-0 bg-transparent" />
+            <span className="dim">{chartBackground ?? themePanel}</span>
           </label>
           <label className="flex items-center gap-2">Space after last candle
             <input type="range" min="0" max="20" value={rightOffset} onChange={(e) => setRightOffset(Number(e.target.value))} />
@@ -301,7 +341,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
       <div className="relative flex-1 min-h-0">
         {legend && (
-          <div className="absolute top-1 left-2 z-10 flex flex-col gap-0.5 text-[11px] pointer-events-none bg-[rgba(10,10,10,0.7)] px-2 py-1 rounded max-w-[95%]">
+          <div className="chart-legend absolute top-1 left-2 z-10 flex flex-col gap-0.5 text-[11px] pointer-events-none px-2 py-1 rounded max-w-[95%]">
             <div className="flex gap-3">
               <span className="dim">O <span className="text-[var(--text)]">{fmt(legend.open)}</span></span>
               <span className="dim">H <span className="up">{fmt(legend.high)}</span></span>

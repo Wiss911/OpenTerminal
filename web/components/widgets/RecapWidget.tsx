@@ -42,7 +42,7 @@ export default function RecapWidget() {
         </span>
       </div>
 
-      <div className="px-2 pb-2 text-[12px] leading-relaxed border-b border-[#161616]">{data.summary}</div>
+      <div className="px-2 pb-2 text-[12px] leading-relaxed border-b border-[var(--row-border)]">{data.summary}</div>
 
       <table className="data-table">
         <thead>
@@ -81,7 +81,7 @@ export default function RecapWidget() {
         <div>
           <div className="dim text-[10px] uppercase mb-1">Top gainers</div>
           {data.gainers.map((r) => (
-            <div key={r.symbol} className="flex justify-between cursor-pointer hover:bg-[#161616]" onClick={() => setActiveSymbol(r.symbol)}>
+            <div key={r.symbol} className="flex justify-between cursor-pointer hover:bg-[var(--hover)]" onClick={() => setActiveSymbol(r.symbol)}>
               <span className="truncate mr-1">{r.symbol}</span>
               <span className={pctClass(r.changePercent)}>
                 <Flash value={r.changePercent}>{fmt(r.changePercent)}%</Flash>
@@ -92,7 +92,7 @@ export default function RecapWidget() {
         <div>
           <div className="dim text-[10px] uppercase mb-1">Top losers</div>
           {data.losers.map((r) => (
-            <div key={r.symbol} className="flex justify-between cursor-pointer hover:bg-[#161616]" onClick={() => setActiveSymbol(r.symbol)}>
+            <div key={r.symbol} className="flex justify-between cursor-pointer hover:bg-[var(--hover)]" onClick={() => setActiveSymbol(r.symbol)}>
               <span className="truncate mr-1">{r.symbol}</span>
               <span className={pctClass(r.changePercent)}>
                 <Flash value={r.changePercent}>{fmt(r.changePercent)}%</Flash>
@@ -102,7 +102,7 @@ export default function RecapWidget() {
         </div>
       </div>
 
-      <div className="px-2 py-1 border-t border-[#161616]">
+      <div className="px-2 py-1 border-t border-[var(--row-border)]">
         <div className="dim text-[10px] uppercase mb-1">Sector performance</div>
         {data.sectors.map((s) => (
           <div key={s.sector} className="flex justify-between">
@@ -112,7 +112,7 @@ export default function RecapWidget() {
         ))}
       </div>
 
-      <div className="border-t border-[#161616]">
+      <div className="border-t border-[var(--row-border)]">
         <div className="dim text-[10px] uppercase px-2 pt-1">Headlines</div>
         {data.news.map((n, i) => {
           const body = (
@@ -121,7 +121,7 @@ export default function RecapWidget() {
               <div className="dim text-[10px]">{n.publisher}</div>
             </>
           );
-          const className = "block px-2 py-1 border-b border-[#161616] hover:bg-[#161616]";
+          const className = "block px-2 py-1 border-b border-[var(--row-border)] hover:bg-[var(--hover)]";
           return isSafeHttpUrl(n.link) ? (
             <a key={i} href={n.link} target="_blank" rel="noreferrer" className={className}>
               {body}
