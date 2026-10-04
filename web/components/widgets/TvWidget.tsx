@@ -18,8 +18,8 @@ const CHANNELS: Channel[] = [
     id: "cryptoface",
     label: "Crypto Face (YouTube)",
     type: "youtube",
-    channelId: "UCs916iGMdCKKVHMnbzXTgYA",
-    youtubeUrl: "https://www.youtube.com/@cryptoface68/live",
+    channelId: "UCnpL_SpKLZpwAAIWmWpCIzQ",
+    youtubeUrl: "https://www.youtube.com/@cryptoface/live",
   },
 ];
 

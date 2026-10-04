@@ -11,10 +11,12 @@ type Row = {
   changePercent: number | null; volume: number | null; marketCap: number | null;
   sector: string;
 };
+type Provider = "tradingview" | "hyperliquid-perps" | "hyperliquid-xyz" | "hyperliquid-all";
 
 export default function ScreenerWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const [market, setMarket] = useState<"us" | "eu">("us");
+  const [provider, setProvider] = useState<Provider>("tradingview");
   const [sector, setSector] = useState("");
   const [changeMin, setChangeMin] = useState("");
   const [marketCapMinB, setMarketCapMinB] = useState("");
@@ -29,10 +31,11 @@ export default function ScreenerWidget() {
   });
 
   const params = new URLSearchParams();
+  params.set("provider", provider);
   params.set("market", market);
-  if (sector) params.set("sector", sector);
+  if (sector && provider === "tradingview") params.set("sector", sector);
   if (changeMin) params.set("changeMin", changeMin);
-  if (marketCapMinB) params.set("marketCapMin", String(Number(marketCapMinB) * 1e9));
+  if (marketCapMinB && provider === "tradingview") params.set("marketCapMin", String(Number(marketCapMinB) * 1e9));
   if (volumeMinM) params.set("volumeMin", String(Number(volumeMinM) * 1e6));
   params.set("sort", sort);
   params.set("dir", dir);
@@ -58,21 +61,33 @@ export default function ScreenerWidget() {
   return (
     <div>
       <div className="flex gap-2 p-1 flex-wrap items-center">
-        <div className="flex gap-1">
-          {(["us", "eu"] as const).map((m) => (
-            <button key={m} className={`term-btn ${market === m ? "active" : ""}`} onClick={() => setMarket(m)}>
-              {m.toUpperCase()}
-            </button>
-          ))}
-        </div>
-        <select value={sector} onChange={(e) => setSector(e.target.value)}>
-          <option value="">All sectors</option>
-          {sectors.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
+        <select aria-label="Data provider" value={provider} onChange={(e) => {
+          const next = e.target.value as Provider;
+          setProvider(next);
+          setSector("");
+          if (next !== "tradingview") setSort("volume");
+          else setSort("marketCap");
+        }}>
+          <option value="tradingview">TradingView</option>
+          <option value="hyperliquid-perps">Hyperliquid Perpetuals</option>
+          <option value="hyperliquid-xyz">Hyperliquid XYZ</option>
+          <option value="hyperliquid-all">Hyperliquid All</option>
         </select>
+        {provider === "tradingview" ? <>
+          <div className="flex gap-1">
+            {(["us", "eu"] as const).map((m) => (
+              <button key={m} className={`term-btn ${market === m ? "active" : ""}`} onClick={() => setMarket(m)}>
+                {m.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <select value={sector} onChange={(e) => setSector(e.target.value)}>
+            <option value="">All sectors</option>
+            {sectors.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </> : null}
         <input className="w-20" placeholder="Chg% min" value={changeMin} onChange={(e) => setChangeMin(e.target.value)} />
-        <input className="w-24" placeholder="MCap min ($B)" value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />
+        {provider === "tradingview" && <input className="w-24" placeholder="MCap min ($B)" value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />}
         <input className="w-24" placeholder="Vol min (M)" value={volumeMinM} onChange={(e) => setVolumeMinM(e.target.value)} />
         <span className="dim ml-auto">{isLoading ? "…" : `${data.length} results`}</span>
       </div>

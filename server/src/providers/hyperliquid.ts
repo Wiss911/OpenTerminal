@@ -13,6 +13,8 @@ type AssetContext = {
 type MarketData = [PerpMeta, AssetContext[]];
 
 const marketDataCache = new Map<string, { expires: number; promise: Promise<MarketData> }>();
+type OrderBook = { bids: [string, string][]; asks: [string, string][] };
+const orderBookCache = new Map<string, { expires: number; promise: Promise<OrderBook> }>();
 
 async function info<T>(body: Record<string, unknown>): Promise<T> {
   const response = await fetch(INFO_URL, {
@@ -83,12 +85,13 @@ export async function quote(input: string): Promise<Quote> {
   const parsed = parseSymbol(input);
   if (!parsed) throw new Error("invalid Hyperliquid symbol");
   const [meta, contexts] = await marketData(parsed.dex);
-  const index = meta.universe.findIndex((asset) => asset.name.toUpperCase() === parsed.coin);
+  const index = meta.universe.findIndex((asset) => asset.name.toLowerCase() === parsed.coin.toLowerCase());
   const context = contexts[index];
   const price = Number(context?.markPx);
   if (index < 0 || !Number.isFinite(price) || price <= 0) throw new Error(`hyperliquid market not found: ${parsed.coin}`);
   const previousClose = Number(context.prevDayPx);
   const change = Number.isFinite(previousClose) ? price - previousClose : null;
+  const book = await orderBook(input).catch(() => null);
   return {
     symbol: input.toUpperCase(),
     name: `${parsed.coin} Perpetual`,
@@ -96,7 +99,9 @@ export async function quote(input: string): Promise<Quote> {
     change,
     changePercent: Number.isFinite(previousClose) && previousClose > 0 ? (change! / previousClose) * 100 : null,
     open: null, high: null, low: null, previousClose: Number.isFinite(previousClose) ? previousClose : null,
-    bid: null, ask: null, volume: Number(context.dayNtlVlm) || null, avgVolume: null,
+    bid: book?.bids[0] ? Number(book.bids[0][0]) : null,
+    ask: book?.asks[0] ? Number(book.asks[0][0]) : null,
+    volume: Number(context.dayNtlVlm) || null, avgVolume: null,
     marketCap: null, pe: null, eps: null, dividendYield: null, week52High: null, week52Low: null,
     beta: null, sharesOutstanding: null, currency: "USD", exchange: "Hyperliquid Perpetuals",
     marketState: "Open", time: null, source: "hyperliquid",
@@ -132,9 +137,18 @@ export async function history(input: string, range: string): Promise<Candle[]> {
 export async function orderBook(input: string): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
   const parsed = parseSymbol(input);
   if (!parsed) throw new Error("invalid Hyperliquid symbol");
-  const book = await info<{ levels: Array<Array<{ px: string; sz: string }>> }>({ type: "l2Book", coin: parsed.coin });
-  return {
-    bids: (book.levels?.[0] ?? []).map(({ px, sz }) => [px, sz]),
-    asks: (book.levels?.[1] ?? []).map(({ px, sz }) => [px, sz]),
-  };
+  const key = parsed.coin.toLowerCase();
+  const now = Date.now();
+  const cached = orderBookCache.get(key);
+  if (cached && cached.expires > now) return cached.promise;
+  const promise = info<{ levels: Array<Array<{ px: string; sz: string }>> }>({ type: "l2Book", coin: parsed.coin })
+    .then((book) => ({
+      bids: (book.levels?.[0] ?? []).map(({ px, sz }) => [px, sz] as [string, string]),
+      asks: (book.levels?.[1] ?? []).map(({ px, sz }) => [px, sz] as [string, string]),
+    }));
+  orderBookCache.set(key, { expires: now + 3_000, promise });
+  promise.catch(() => {
+    if (orderBookCache.get(key)?.promise === promise) orderBookCache.delete(key);
+  });
+  return promise;
 }

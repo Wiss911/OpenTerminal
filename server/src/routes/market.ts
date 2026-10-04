@@ -597,7 +597,29 @@ marketRouter.get("/heatmap", async (req, res) => {
 
 marketRouter.get("/screener", async (req, res) => {
   try {
-    let rows = await marketRows(marketParam(req));
+    const provider = String(req.query.provider ?? "tradingview");
+    let rows: tradingview.MarketRow[];
+    if (provider === "tradingview") {
+      rows = await marketRows(marketParam(req));
+    } else if (provider === "hyperliquid-perps") {
+      rows = (await cached("hyperliquid:screener:perps", 60_000, () => hyperliquid.markets(""))).map((r) => ({
+        symbol: `HL:${r.symbol}`, name: r.name, sector: "Hyperliquid Perpetuals",
+        price: r.price, changePercent: r.changePercent24h, volume: r.volume24h, marketCap: null, exchange: "Hyperliquid",
+      }));
+    } else if (provider === "hyperliquid-xyz" || provider === "hyperliquid-all") {
+      const dexes = provider === "hyperliquid-xyz"
+        ? ["xyz"]
+        : (await cached("hyperliquid:dexes", 300_000, () => hyperliquid.dexes())).map((dex) => dex.id).filter(Boolean);
+      const allDexes = provider === "hyperliquid-all" ? ["", ...dexes] : dexes;
+      rows = (await Promise.all(allDexes.map((dex) => cached(`hyperliquid:screener:${dex || "perps"}`, 60_000, () => hyperliquid.markets(dex)))))
+        .flatMap((markets, index) => markets.map((r) => ({
+          symbol: `HL:${r.symbol}`, name: r.name,
+          sector: allDexes[index] ? `Hyperliquid ${allDexes[index].toUpperCase()}` : "Hyperliquid Perpetuals",
+          price: r.price, changePercent: r.changePercent24h, volume: r.volume24h, marketCap: null, exchange: "Hyperliquid",
+        })));
+    } else {
+      return res.status(400).json({ error: "invalid screener provider" });
+    }
     const num = (v: unknown) => (v === undefined ? undefined : Number(v));
     const f = {
       sector: req.query.sector ? String(req.query.sector) : undefined,

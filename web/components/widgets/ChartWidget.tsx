@@ -38,8 +38,31 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [active, setActive] = useState<Set<Indicator>>(new Set(["SMA20"]));
   const [legend, setLegend] = useState<Candle | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [chartBackground, setChartBackground] = useState("#0a0a0a");
+  const [rightOffset, setRightOffset] = useState(5);
+  const [settingsReady, setSettingsReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const settingsKey = `openterminal:chart-settings:${widget.id}`;
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(settingsKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as { background?: string; rightOffset?: number };
+        if (typeof parsed.background === "string" && /^#[0-9a-f]{6}$/i.test(parsed.background)) setChartBackground(parsed.background);
+        if (typeof parsed.rightOffset === "number" && Number.isFinite(parsed.rightOffset)) setRightOffset(Math.max(0, Math.min(20, parsed.rightOffset)));
+      }
+    } catch { /* Keep usable defaults when local settings are unavailable. */ }
+    setSettingsReady(true);
+  }, [settingsKey]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    try { localStorage.setItem(settingsKey, JSON.stringify({ background: chartBackground, rightOffset })); }
+    catch { /* Settings remain active for this session when storage is unavailable. */ }
+  }, [chartBackground, rightOffset, settingsKey, settingsReady]);
 
   const { data: candles, error } = useQuery({
     queryKey: ["history", symbol, range],
@@ -131,10 +154,10 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (!el || !candles || candles.length === 0) return;
 
     const chart = createChart(el, {
-      layout: { background: { color: "#0a0a0a" }, textColor: "#808080", fontSize: 10, attributionLogo: false },
+      layout: { background: { color: chartBackground }, textColor: "#808080", fontSize: 10, attributionLogo: false },
       grid: { vertLines: { color: "#1a1a1a" }, horzLines: { color: "#1a1a1a" } },
       crosshair: { mode: 0 },
-      timeScale: { borderColor: "#262626", timeVisible: range === "1D" || range === "5D" },
+      timeScale: { borderColor: "#262626", timeVisible: range === "1D" || range === "5D", rightOffset },
       rightPriceScale: { borderColor: "#262626" },
       autoSize: true,
       // Mouse-wheel is left free for page scrolling — zoom via drag, pinch, or the range buttons instead.
@@ -224,6 +247,13 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     };
   }, [candles, chartType, indicatorData, range, byTime]);
 
+  useEffect(() => {
+    chartRef.current?.applyOptions({
+      layout: { background: { color: chartBackground } },
+      timeScale: { rightOffset },
+    });
+  }, [chartBackground, rightOffset]);
+
   const toggleIndicator = (ind: Indicator) =>
     setActive((prev) => {
       const next = new Set(prev);
@@ -252,7 +282,22 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
             {ind}
           </button>
         ))}
+        <button className={`term-btn ml-auto ${settingsOpen ? "active" : ""}`} onClick={() => setSettingsOpen((open) => !open)} aria-label="Chart settings" title="Chart settings">
+          ⚙
+        </button>
       </div>
+      {settingsOpen && (
+        <div className="flex gap-4 items-center flex-wrap px-2 py-1 border-b border-[#262626] text-xs shrink-0">
+          <label className="flex items-center gap-2">Background
+            <input type="color" value={chartBackground} onChange={(e) => setChartBackground(e.target.value)} className="w-7 h-6 p-0 border-0 bg-transparent" />
+            <span className="dim">{chartBackground}</span>
+          </label>
+          <label className="flex items-center gap-2">Space after last candle
+            <input type="range" min="0" max="20" value={rightOffset} onChange={(e) => setRightOffset(Number(e.target.value))} />
+            <span className="dim w-8">{rightOffset} bars</span>
+          </label>
+        </div>
+      )}
       {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
       <div className="relative flex-1 min-h-0">
         {legend && (

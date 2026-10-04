@@ -6,6 +6,7 @@ import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 import Flash from "../Flash";
 
 type ShortVolume = { date: string; shortVolume: number; shortExemptVolume: number; totalVolume: number; shortVolumePercent: number };
+type OrderBook = { bids: [string, string][]; asks: [string, string][] };
 
 export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
@@ -14,11 +15,20 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
     queryFn: async () => (await apiGet<Quote[]>(`/api/quotes?symbols=${symbol}`))[0],
     refetchInterval: 1_000,
   });
+  const isHyperliquid = symbol.toUpperCase().startsWith("HL:");
+  const orderBookSymbol = symbol.replace(/^HL:/i, "");
+  const { data: orderBook, error: orderBookError } = useQuery({
+    queryKey: ["hyperliquid-orderbook", orderBookSymbol],
+    queryFn: () => apiGet<OrderBook>(`/api/crypto/hyperliquid/orderbook/${encodeURIComponent(orderBookSymbol)}`),
+    enabled: isHyperliquid,
+    refetchInterval: 3_000,
+  });
   // FINRA's Reg SHO file only updates once a day (next-morning), so no point polling it fast.
   const { data: shortVol } = useQuery({
     queryKey: ["short-volume", symbol],
     queryFn: () => apiGet<ShortVolume | null>(`/api/short-volume/${symbol}`),
     staleTime: 3_600_000,
+    enabled: !isHyperliquid,
   });
 
   if (error) return <div className="p-2 down">Error: {(error as Error).message}</div>;
@@ -65,6 +75,30 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
           </div>
         ))}
       </div>
+      {isHyperliquid && (
+        <div className="mt-3 border-t border-[#262626] pt-2">
+          <div className="flex justify-between dim text-[10px] mb-1">
+            <span>Hyperliquid Order Book · top 5</span>
+            <span>{orderBookError ? "Unavailable" : "Live · 3s"}</span>
+          </div>
+          {orderBook ? (
+            <div className="grid grid-cols-2 gap-3 text-[11px]">
+              <div>
+                <div className="flex justify-between up mb-1"><span>Bids</span><span>Size</span></div>
+                {orderBook.bids.slice(0, 5).map(([price, size], index) => (
+                  <div key={`${price}-${index}`} className="flex justify-between"><span>{fmt(Number(price))}</span><span className="dim">{fmt(Number(size), 4)}</span></div>
+                ))}
+              </div>
+              <div>
+                <div className="flex justify-between down mb-1"><span>Asks</span><span>Size</span></div>
+                {orderBook.asks.slice(0, 5).map(([price, size], index) => (
+                  <div key={`${price}-${index}`} className="flex justify-between"><span>{fmt(Number(price))}</span><span className="dim">{fmt(Number(size), 4)}</span></div>
+                ))}
+              </div>
+            </div>
+          ) : !orderBookError ? <div className="dim text-[11px]">Loading order book…</div> : <div className="down text-[11px]">Order book temporarily unavailable.</div>}
+        </div>
+      )}
     </div>
   );
 }
