@@ -1,8 +1,8 @@
 # Dependency update: DietPi / Futro checks
 
-Run these commands from the updated repository root on the Futro. The
-`update-deps` branch/commit must already have been transferred there. Do not
-replace the running production stack until these checks pass.
+The Linux-amd64 images have now been built and tested locally using Docker
+Desktop. Transfer the prebuilt archive to the Futro to avoid building there.
+Do not replace the running production stack until the Futro smoke checks pass.
 
 The images use `node:24.21.0-bookworm-slim` (Debian 12, glibc) and the npm
 bundled with Node. Both Dockerfiles use the root workspace lockfile with
@@ -13,10 +13,34 @@ better-sqlite3 stays at 13.0.3. Its published package contains
 `prebuilds/linux-x64.node`; ignoring install scripts avoids the implicit
 node-gyp build. The API Dockerfile opens an in-memory SQLite database and
 executes `SELECT 1` during the build, so a missing or incompatible native
-binary fails the image build. This Linux runtime check has not been executed
-locally because Docker is unavailable on the development machine.
+binary fails the image build. This check passed in the actual Linux API image.
 
-## Build and test on Linux x86_64
+## Transfer the prebuilt images to the Futro (recommended)
+
+The development machine exports both production images to the git-ignored
+`out/openterminal-update-deps-linux-amd64.tar`, with a matching `.tar.sha256`
+file. These contain image layers only, without the disposable containers' data.
+
+Copy both files to the Futro using your existing file transfer method. On the
+Futro, in the directory containing the two files:
+
+```sh
+uname -m
+sha256sum -c openterminal-update-deps-linux-amd64.tar.sha256
+docker load -i openterminal-update-deps-linux-amd64.tar
+docker image inspect --format '{{.Os}}/{{.Architecture}}' openterminal-api:update-deps openterminal-web:update-deps
+```
+
+Expected: `x86_64`, a successful checksum, and `linux/amd64` for both images.
+Continue with the isolated runtime smoke test below. No Node/npm installation
+or Docker build is required on the Futro. A DietPi Trixie host can run these
+Bookworm containers; the containers provide their own userspace libraries.
+
+## Optional: reproduce the build and tests on Linux x86_64
+
+These commands are for rebuilding from source. They are unnecessary when
+using the exported images. Run them from the updated repository root; the
+`update-deps` branch/commit must already have been transferred there.
 
 ```sh
 git branch --show-current
@@ -107,7 +131,18 @@ docker network rm openterminal-update-deps-test
   present in the lockfile; the clean local installation still runs on Windows.
 - Skipping install scripts relies on the binaries provided by this locked
   dependency set. Re-run the image build and SQLite check after future updates.
-- Linux Docker builds, Linux container startup, browser interactions, and
-  the production deployment remain to be verified on the Futro.
+- Both Docker production images built successfully for `linux/amd64` on
+  Docker Desktop. The bundled Linux SQLite binary passed the image-build check.
+- All 26 tests also passed in the Linux API build-stage container.
+- Both production containers started with disposable data. API health and
+  health through the web proxy returned `ok: true`; the UI, AAPL history,
+  and macro endpoints returned HTTP 200. All nine JavaScript/CSS assets linked
+  from the UI were also fetched successfully.
+- The API runtime reports Node 24.21.0, bundled npm 11.19.0, and glibc 2.36.
+  gcc, g++, make, and Python are absent. The disposable test containers and
+  test network were removed after verification; the images and archive remain.
+- Browser automation was unavailable due to a Codex browser-connection error.
+  Chart interactions, layout persistence, the Futro runtime, and the production
+  deployment remain unverified.
 - `docker-compose.yml` is unchanged. Build both Dockerfiles with the
   repository root as context, as shown above.
