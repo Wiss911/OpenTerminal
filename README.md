@@ -114,6 +114,12 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 
 ## 🚀 Quick start
 
+Use Node.js 24.21.0 LTS (see `.node-version`) with its bundled npm.
+Docker and CI use `npm ci --ignore-scripts` with the workspace lockfile.
+On Linux x86_64, better-sqlite3 13 uses its bundled glibc binary, without
+installing a compiler. The API image checks this with an in-memory database
+during the build.
+
 ```bash
 git clone https://github.com/ErTasselli/openterminal.git
 cd openterminal
@@ -215,7 +221,7 @@ Please open an issue first for anything non‑trivial so we can align on approac
 
 ## Known limitations
 
-- `npm audit` still flags two dependency advisories this project doesn't force-fix: `fast-xml-parser`'s XMLBuilder injection (moderate) doesn't apply here — only `XMLParser` is used, never `XMLBuilder` — and `postcss`'s high-severity issue is bundled inside Next.js itself, only resolved by a Next 16 major upgrade. Both are tracked, neither is silently ignored.
+- `npm audit --omit=dev` reports no production vulnerabilities after the dependency update. The full audit still reports five high-severity entries in the development-only Next.js ESLint/glob dependency chain; no incompatible forced downgrade was applied. See [Docker verification on DietPi/Futro](DOCKER_TESTING.md) for the deployment checks and remaining limitations.
 - If you deploy behind a reverse proxy or load balancer, set `API_HOST`/`WEB_ORIGIN` to match, and terminate TLS in front of it — this project doesn't handle HTTPS itself.
 
 <br/>

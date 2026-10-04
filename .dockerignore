@@ -1,0 +1,12 @@
+.git
+.codex
+.agents
+docker-compose*.yml
+**/node_modules
+**/.next
+**/dist
+**/*.tsbuildinfo
+**/.env*
+**/*.key
+**/*.pem
+data

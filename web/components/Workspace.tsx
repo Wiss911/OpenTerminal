@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import GridLayout, { WidthProvider } from "react-grid-layout";
+import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { useTerminal, type WidgetInstance } from "../store/terminal";
