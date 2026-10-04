@@ -13,6 +13,7 @@ type CryptoRow = {
 };
 type GlobalStats = { totalMarketCap: number; btcDominance: number; ethDominance: number };
 type PerpDex = { id: string; label: string };
+const BINANCE_INTRADAY = new Set(["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "LTC", "MATIC"]);
 
 function Sparkline({ data }: { data: number[] }) {
   if (data.length < 2) return null;
@@ -35,6 +36,7 @@ export default function CryptoWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const [source, setSource] = useState<"spot" | "hyperliquid">("spot");
   const [dex, setDex] = useState("");
+  const [period, setPeriod] = useState<"5m" | "15m" | "1h">("15m");
   const { data = [], error } = useQuery({
     queryKey: source === "spot" ? ["crypto"] : ["hyperliquid-markets", dex],
     queryFn: () => apiGet<CryptoRow[]>(source === "spot"
@@ -54,6 +56,17 @@ export default function CryptoWidget() {
     refetchInterval: 30_000,
     enabled: source === "spot",
   });
+  const changeSymbols = data
+    .filter((c) => source === "hyperliquid" || BINANCE_INTRADAY.has(c.symbol))
+    .slice(0, 40)
+    .map((c) => source === "hyperliquid" ? `HL:${c.symbol}` : c.symbol)
+    .join(",");
+  const { data: shortChanges = {} } = useQuery({
+    queryKey: ["short-changes", changeSymbols],
+    queryFn: () => apiGet<Record<string, Record<string, number | null>>>(`/api/changes?symbols=${encodeURIComponent(changeSymbols)}`),
+    enabled: changeSymbols.length > 0,
+    staleTime: 60_000,
+  });
 
   if (error) return <div className="p-2 down">Error: {(error as Error).message}</div>;
 
@@ -67,6 +80,9 @@ export default function CryptoWidget() {
             {dexes.map((item) => <option key={item.id || "main"} value={item.id}>{item.label}</option>)}
           </select>
         )}
+        <select aria-label="Crypto short change period" value={period} onChange={(e) => setPeriod(e.target.value as typeof period)}>
+          <option value="5m">Δ 5m</option><option value="15m">Δ 15m</option><option value="1h">Δ 1h</option>
+        </select>
       </div>
       {source === "spot" && global && (
         <div className="flex gap-4 px-2 py-1 border-b border-[var(--border)] dim">
@@ -77,7 +93,7 @@ export default function CryptoWidget() {
       )}
       <table className="data-table">
         <thead>
-          <tr><th>#</th><th>Asset</th><th>{source === "hyperliquid" ? "Mark Price" : "Price"}</th><th>24h%</th><th>{source === "hyperliquid" ? "—" : "MCap"}</th><th>Vol 24h</th><th>{source === "hyperliquid" ? "" : "7d"}</th></tr>
+          <tr><th>#</th><th>Asset</th><th>{source === "hyperliquid" ? "Mark Price" : "Price"}</th><th>24h%</th><th>{period}</th><th>30m</th><th>4h</th><th>{source === "hyperliquid" ? "—" : "MCap"}</th><th>Vol 24h USD*</th><th>{source === "hyperliquid" ? "" : "7d"}</th></tr>
         </thead>
         <tbody>
           {data.map((c) => (
@@ -88,6 +104,11 @@ export default function CryptoWidget() {
               <td className={pctClass(c.changePercent24h)}>
                 <Flash value={c.changePercent24h}>{fmt(c.changePercent24h)}%</Flash>
               </td>
+              {[period, "30m", "4h"].map((key) => {
+                const symbol = source === "hyperliquid" ? `HL:${c.symbol}` : c.symbol;
+                const change = shortChanges[symbol]?.[key];
+                return <td key={key} className={pctClass(change)} title={source === "spot" && !BINANCE_INTRADAY.has(c.symbol) ? "Intraday history is not currently available for this spot provider." : undefined}><Flash value={change}>{change == null ? "—" : `${fmt(change)}%`}</Flash></td>;
+              })}
               <td>{source === "hyperliquid" ? "—" : fmtBig(c.marketCap)}</td>
               <td>{fmtBig(c.volume24h)}</td>
               <td>{source === "spot" && <Sparkline data={c.sparkline.filter((_, i) => i % 4 === 0)} />}</td>

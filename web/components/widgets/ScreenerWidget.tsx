@@ -21,6 +21,10 @@ export default function ScreenerWidget() {
   const [changeMin, setChangeMin] = useState("");
   const [marketCapMinB, setMarketCapMinB] = useState("");
   const [volumeMinM, setVolumeMinM] = useState("");
+  const [period, setPeriod] = useState<"5m" | "15m" | "1h">("15m");
+  const [periodMin, setPeriodMin] = useState("");
+  const [periodMax, setPeriodMax] = useState("");
+  const [page, setPage] = useState(0);
   const [sort, setSort] = useState("marketCap");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
 
@@ -46,6 +50,23 @@ export default function ScreenerWidget() {
     refetchInterval: 20_000,
   });
 
+  const pageCount = Math.max(1, Math.ceil(data.length / 40));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = data.slice(safePage * 40, (safePage + 1) * 40);
+  const changeSymbols = pageRows.map((row) => row.symbol).join(",");
+  const { data: shortChanges = {} } = useQuery({
+    queryKey: ["short-changes", changeSymbols],
+    queryFn: () => apiGet<Record<string, Record<string, number | null>>>(`/api/changes?symbols=${encodeURIComponent(changeSymbols)}`),
+    enabled: pageRows.length > 0,
+    staleTime: 60_000,
+  });
+  const visibleRows = pageRows.filter((row) => {
+    const change = shortChanges[row.symbol]?.[period];
+    if (periodMin && (change === null || change === undefined || change < Number(periodMin))) return false;
+    if (periodMax && (change === null || change === undefined || change > Number(periodMax))) return false;
+    return true;
+  });
+
   const th = (key: string, label: string) => (
     <th
       onClick={() => {
@@ -64,6 +85,7 @@ export default function ScreenerWidget() {
         <select aria-label="Data provider" value={provider} onChange={(e) => {
           const next = e.target.value as Provider;
           setProvider(next);
+          setPage(0);
           setSector("");
           if (next !== "tradingview") setSort("volume");
           else setSort("marketCap");
@@ -89,6 +111,11 @@ export default function ScreenerWidget() {
         <input className="w-20" placeholder="Chg% min" value={changeMin} onChange={(e) => setChangeMin(e.target.value)} />
         {provider === "tradingview" && <input className="w-24" placeholder="MCap min ($B)" value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />}
         <input className="w-24" placeholder="Vol min (M)" value={volumeMinM} onChange={(e) => setVolumeMinM(e.target.value)} />
+        <select aria-label="Short change filter period" value={period} onChange={(e) => setPeriod(e.target.value as typeof period)}>
+          <option value="5m">Δ 5m</option><option value="15m">Δ 15m</option><option value="1h">Δ 1h</option>
+        </select>
+        <input aria-label={`Minimum ${period} price change`} className="w-24" placeholder="Δ min %" value={periodMin} onChange={(e) => setPeriodMin(e.target.value)} />
+        <input aria-label={`Maximum ${period} price change`} className="w-24" placeholder="Δ max %" value={periodMax} onChange={(e) => setPeriodMax(e.target.value)} />
         <span className="dim ml-auto">{isLoading ? "…" : `${data.length} results`}</span>
       </div>
       {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
@@ -100,12 +127,13 @@ export default function ScreenerWidget() {
             <th>Sector</th>
             {th("price", "Last")}
             {th("changePercent", "Chg%")}
-            {th("volume", "Vol")}
+            <th title={provider === "tradingview" ? "TradingView volume is traded shares/units, not USD." : "Hyperliquid dayNtlVlm is 24-hour traded notional in USD."} onClick={() => { if (sort === "volume") setDir(dir === "asc" ? "desc" : "asc"); else setSort("volume"); }}>{provider === "tradingview" ? "Vol (units)" : "Vol USD"} {sort === "volume" ? (dir === "desc" ? "▼" : "▲") : ""}</th>
+            <th title="Percent move over the selected short interval">{period}</th><th>30m</th><th>4h</th>
             {th("marketCap", "MCap")}
           </tr>
         </thead>
         <tbody>
-          {data.map((q) => (
+          {visibleRows.map((q) => (
             <tr key={q.symbol} onClick={() => setActiveSymbol(q.symbol)}>
               <td className="font-bold">{q.symbol}</td>
               <td className="!text-left max-w-40 truncate">{q.name}</td>
@@ -115,11 +143,23 @@ export default function ScreenerWidget() {
                 <Flash value={q.changePercent}>{fmt(q.changePercent)}%</Flash>
               </td>
               <td>{fmtBig(q.volume)}</td>
+              {[period, "30m", "4h"].map((key) => {
+                const change = shortChanges[q.symbol]?.[key];
+                return <td key={key} className={pctClass(change)}><Flash value={change}>{change == null ? "—" : `${fmt(change)}%`}</Flash></td>;
+              })}
               <td>{fmtBig(q.marketCap)}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <div className="flex items-center justify-between p-1 dim">
+        <span>Intraday filter applies to this page; candle data is cached for 60 seconds.</span>
+        <span className="flex gap-2 items-center">
+          <button className="term-btn" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹ Prev</button>
+          {safePage + 1} / {pageCount}
+          <button className="term-btn" disabled={(safePage + 1) * 40 >= data.length} onClick={() => setPage((p) => p + 1)}>Next ›</button>
+        </span>
+      </div>
     </div>
   );
 }

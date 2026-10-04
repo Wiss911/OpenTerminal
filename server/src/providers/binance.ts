@@ -59,7 +59,9 @@ export async function quote(symbol: string): Promise<Quote> {
     previousClose: +d.prevClosePrice,
     bid: +d.bidPrice || null,
     ask: +d.askPrice || null,
-    volume: +d.volume,
+    // The quote-asset turnover is denominated in USDT, which is a close USD
+    // proxy and matches the notional shown in the crypto market list.
+    volume: +d.quoteVolume,
     avgVolume: null,
     marketCap: null,
     pe: null,

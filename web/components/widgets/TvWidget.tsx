@@ -147,7 +147,10 @@ export default function TvWidget() {
         {error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center dim bg-black">
             <span>{error}</span>
-            {channel.type === "youtube" && <a className="amber underline" href={channel.youtubeUrl} target="_blank" rel="noreferrer">Auf YouTube öffnen</a>}
+            {channel.type === "youtube" && <div className="flex gap-3 flex-wrap justify-center">
+              <button className="term-btn active" onClick={() => window.open(channel.youtubeUrl, "cryptoface-live", "popup=yes,width=900,height=600,resizable=yes,scrollbars=yes")}>Im Mini-Player öffnen</button>
+              <a className="amber underline" href={channel.youtubeUrl} target="_blank" rel="noreferrer">Auf YouTube öffnen</a>
+            </div>}
           </div>
         )}
       </div>

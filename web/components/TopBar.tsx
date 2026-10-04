@@ -40,6 +40,18 @@ function marketStateNY(): { label: string; open: boolean } {
 export default function TopBar() {
   const setCommandOpen = useTerminal((s) => s.setCommandOpen);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
+  const [theme, setTheme] = useState(() => {
+    try { return typeof window === "undefined" ? "terminal" : localStorage.getItem("openterminal-theme") ?? "terminal"; }
+    catch { return "terminal"; }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  const changeTheme = (next: string) => {
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("openterminal-theme", next);
+  };
   const { data: status } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<Status>("/api/status"),
@@ -69,6 +81,11 @@ export default function TopBar() {
           ? healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
           : "connecting…"}
       </span>
+      <select aria-label="Dashboard theme" value={theme} onChange={(e) => changeTheme(e.target.value)} title="Dashboard color theme">
+        <option value="terminal">Amber</option>
+        <option value="ocean">Ocean</option>
+        <option value="violet">Violet</option>
+      </select>
       <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
     </header>
   );

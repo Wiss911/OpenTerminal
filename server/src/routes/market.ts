@@ -235,6 +235,52 @@ marketRouter.get("/quotes", async (req, res) => {
   }
 });
 
+// Short-window returns shared by list widgets. Each symbol is fetched once per
+// minute; callers are capped so a large screener never fans out hundreds of
+// candle requests to public providers.
+marketRouter.get("/changes", async (req, res) => {
+  const symbols = String(req.query.symbols ?? "")
+    .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 40);
+  if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
+  try {
+    const entries: Array<readonly [string, Record<string, number | null>]> = [];
+    for (let offset = 0; offset < symbols.length; offset += 5) {
+      const batch = await Promise.all(symbols.slice(offset, offset + 5).map(async (symbol) => {
+        const values = await cached(`short-change:${symbol}`, 60_000, async () => {
+        const candles = hyperliquid.parseSymbol(symbol)
+          ? await hyperliquid.history(symbol, "1D")
+          : binance.CRYPTO_SYMBOLS.has(symbol)
+          ? await binance.history(symbol, "1D")
+          : await withFallback([
+              ["nasdaq", () => nasdaq.history(symbol, "1D")],
+              ["yahoo", () => yahoo.history(symbol, "1d", "5m")],
+              ["stooq", () => stooq.history(symbol)],
+            ]);
+        const ordered = candles.filter((c) => Number.isFinite(c.close) && c.close > 0).sort((a, b) => a.time - b.time);
+        if (ordered.length < 2) return {};
+        const latest = ordered[ordered.length - 1];
+        const result: Record<string, number | null> = {};
+        for (const [key, minutes] of [["5m", 5], ["15m", 15], ["30m", 30], ["1h", 60], ["4h", 240]] as const) {
+          const target = latest.time - minutes * 60;
+          let base = ordered[0];
+          for (const candle of ordered) {
+            if (candle.time > target) break;
+            base = candle;
+          }
+          result[key] = target < ordered[0].time ? null : ((latest.close - base.close) / base.close) * 100;
+        }
+        return result;
+        }).catch(() => ({}));
+        return [symbol, values] as const;
+      }));
+      entries.push(...batch);
+    }
+    res.json(Object.fromEntries(entries));
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
 // ---- history / candles ----
 
 marketRouter.get("/history/:symbol", async (req, res) => {

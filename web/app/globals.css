@@ -11,6 +11,35 @@
   --down: #ff3d3d;
   --text: #d9d9d9;
   --text-dim: #808080;
+  --hover: #1a1a1a;
+}
+
+:root[data-theme="ocean"] {
+  --bg: #061018;
+  --panel: #0a1722;
+  --panel-2: #102331;
+  --border: #1d3b4c;
+  --amber: #42c6d9;
+  --amber-dim: #237f94;
+  --up: #45d6a2;
+  --down: #ff6b78;
+  --text: #d9edf2;
+  --text-dim: #82a7b2;
+  --hover: #142d3b;
+}
+
+:root[data-theme="violet"] {
+  --bg: #0c0a12;
+  --panel: #14111e;
+  --panel-2: #1d182b;
+  --border: #39304e;
+  --amber: #c4a1ff;
+  --amber-dim: #8062b4;
+  --up: #65d8ad;
+  --down: #ff718a;
+  --text: #e9e1f4;
+  --text-dim: #a399b5;
+  --hover: #241e33;
 }
 
 html,
@@ -102,7 +131,7 @@ table.data-table td {
   white-space: nowrap;
 }
 table.data-table tbody tr:hover {
-  background: #1a1a1a;
+  background: var(--hover);
   cursor: pointer;
 }
 
