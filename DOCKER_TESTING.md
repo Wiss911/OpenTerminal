@@ -142,7 +142,17 @@ docker network rm openterminal-update-deps-test
   gcc, g++, make, and Python are absent. The disposable test containers and
   test network were removed after verification; the images and archive remain.
 - Browser automation was unavailable due to a Codex browser-connection error.
-  Chart interactions, layout persistence, the Futro runtime, and the production
-  deployment remain unverified.
+  Chart interactions, layout persistence, and AI-provider calls remain
+  unverified.
+- The Linux x86_64 Futro deployment was also verified: SQLite works without
+  compilation, both services run with the existing data volume, API/proxy
+  health and public market endpoints return HTTP 200, the protected portfolio
+  endpoint works through the web proxy, and all nine UI assets are served.
+  Database integrity passed and portfolio/transaction row counts matched the
+  consistent pre-update SQLite backup.
+- On the Futro, a separate image-only Compose override selects the prebuilt
+  images. The existing customized Compose file is unchanged. Use the provided
+  start/rollback scripts with the override; running the old Compose file alone
+  can select the previous images again.
 - `docker-compose.yml` is unchanged. Build both Dockerfiles with the
   repository root as context, as shown above.
