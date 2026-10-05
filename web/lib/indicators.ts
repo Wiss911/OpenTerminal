@@ -24,17 +24,75 @@ export function ema(candles: Candle[], period: number): Point[] {
   return out.slice(period - 1);
 }
 
-export function vwap(candles: Candle[]): Point[] {
-  const out: Point[] = [];
-  let cumPV = 0;
-  let cumV = 0;
-  for (const c of candles) {
-    const typical = (c.high + c.low + c.close) / 3;
-    cumPV += typical * c.volume;
-    cumV += c.volume;
-    if (cumV > 0) out.push({ time: c.time, value: cumPV / cumV });
+export type ProfileLevels = { poc: number; vah: number; val: number };
+
+/**
+ * Estimate volume-at-price by spreading each OHLCV bar's volume uniformly
+ * across its high-low range. These are candle-derived estimates, not trade-
+ * level volume profile values.
+ */
+export function volumeProfile(candles: Candle[], bins = 48): ProfileLevels | null {
+  const valid = candles.filter((c) => c.volume > 0 && Number.isFinite(c.low) && Number.isFinite(c.high));
+  if (!valid.length) return null;
+  let low = Math.min(...valid.map((c) => c.low));
+  let high = Math.max(...valid.map((c) => c.high));
+  if (high <= low) return { poc: low, vah: low, val: low };
+  bins = Math.max(8, Math.min(128, Math.floor(bins)));
+  const step = (high - low) / bins;
+  const volume = new Array<number>(bins).fill(0);
+  for (const candle of valid) {
+    const first = Math.max(0, Math.min(bins - 1, Math.floor((candle.low - low) / step)));
+    const last = Math.max(first, Math.min(bins - 1, Math.floor((candle.high - low) / step)));
+    const share = candle.volume / (last - first + 1);
+    for (let i = first; i <= last; i++) volume[i] += share;
   }
-  return out;
+  const pocIndex = volume.indexOf(Math.max(...volume));
+  const target = volume.reduce((a, b) => a + b, 0) * 0.70;
+  let first = pocIndex, last = pocIndex, included = volume[pocIndex];
+  while (included < target && (first > 0 || last < bins - 1)) {
+    const below = first > 0 ? volume[first - 1] : -1;
+    const above = last < bins - 1 ? volume[last + 1] : -1;
+    if (above > below) { last++; included += volume[last]; }
+    else { first--; included += volume[first]; }
+  }
+  return {
+    poc: low + (pocIndex + 0.5) * step,
+    val: low + first * step,
+    vah: low + (last + 1) * step,
+  };
+}
+
+/** Current daily profile and the previous UTC day's POC/VAH/VAL, extended as lines. */
+export function dailyProfileLevels(candles: Candle[], bins = 48): Record<"POC" | "VAH" | "VAL" | "PDPOC" | "PDVAH" | "PDVAL", Point[]> {
+  const result = { POC: [] as Point[], VAH: [] as Point[], VAL: [] as Point[], PDPOC: [] as Point[], PDVAH: [] as Point[], PDVAL: [] as Point[] };
+  const days = new Map<string, Candle[]>();
+  for (const candle of candles) {
+    const d = new Date(candle.time * 1000);
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+    const rows = days.get(key) ?? [];
+    rows.push(candle);
+    days.set(key, rows);
+  }
+  const ordered = [...days.values()];
+  for (let i = 0; i < ordered.length; i++) {
+    const previous = i > 0 ? volumeProfile(ordered[i - 1], bins) : null;
+    const accumulated: Candle[] = [];
+    for (const c of ordered[i]) {
+      accumulated.push(c);
+      const current = volumeProfile(accumulated, bins);
+      if (current) {
+        result.POC.push({ time: c.time, value: current.poc });
+        result.VAH.push({ time: c.time, value: current.vah });
+        result.VAL.push({ time: c.time, value: current.val });
+      }
+      if (previous) {
+        result.PDPOC.push({ time: c.time, value: previous.poc });
+        result.PDVAH.push({ time: c.time, value: previous.vah });
+        result.PDVAL.push({ time: c.time, value: previous.val });
+      }
+    }
+  }
+  return result;
 }
 
 export function rsi(candles: Candle[], period = 14): Point[] {

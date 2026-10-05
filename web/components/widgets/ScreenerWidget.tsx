@@ -5,13 +5,19 @@ import { useState } from "react";
 import { apiGet, fmt, fmtBig, pctClass } from "../../lib/api";
 import { useTerminal } from "../../store/terminal";
 import Flash from "../Flash";
+import { ColumnSettings, useVisibleColumns, type TableColumn } from "./ColumnSettings";
 
 type Row = {
   symbol: string; name: string; price: number | null;
   changePercent: number | null; volume: number | null; marketCap: number | null;
   sector: string;
 };
-type Provider = "tradingview" | "hyperliquid-perps" | "hyperliquid-xyz" | "hyperliquid-all";
+type Provider = "tradingview" | "binance-futures" | "hyperliquid-perps" | "hyperliquid-xyz" | "hyperliquid-all";
+const COLUMNS: TableColumn[] = [
+  { id: "symbol", label: "Symbol" }, { id: "name", label: "Name" }, { id: "sector", label: "Provider / sector" },
+  { id: "price", label: "Last" }, { id: "change", label: "Change %" }, { id: "volume", label: "Volume" },
+  { id: "intraday", label: "Selected interval" }, { id: "30m", label: "30m" }, { id: "4h", label: "4h" }, { id: "marketCap", label: "Market cap" },
+];
 
 export default function ScreenerWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
@@ -27,6 +33,7 @@ export default function ScreenerWidget() {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState("marketCap");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const columnPrefs = useVisibleColumns("openterminal:columns:screener", COLUMNS, COLUMNS.map((c) => c.id));
 
   const { data: sectors = [] } = useQuery({
     queryKey: ["sectors", market],
@@ -69,6 +76,7 @@ export default function ScreenerWidget() {
 
   const th = (key: string, label: string) => (
     <th
+      key={key}
       onClick={() => {
         if (sort === key) setDir(dir === "asc" ? "desc" : "asc");
         else setSort(key);
@@ -91,6 +99,7 @@ export default function ScreenerWidget() {
           else setSort("marketCap");
         }}>
           <option value="tradingview">TradingView</option>
+          <option value="binance-futures">Binance USDⓈ-M Perpetuals</option>
           <option value="hyperliquid-perps">Hyperliquid Perpetuals</option>
           <option value="hyperliquid-xyz">Hyperliquid XYZ</option>
           <option value="hyperliquid-all">Hyperliquid All</option>
@@ -117,37 +126,41 @@ export default function ScreenerWidget() {
         <input aria-label={`Minimum ${period} price change`} className="w-24" placeholder="Δ min %" value={periodMin} onChange={(e) => setPeriodMin(e.target.value)} />
         <input aria-label={`Maximum ${period} price change`} className="w-24" placeholder="Δ max %" value={periodMax} onChange={(e) => setPeriodMax(e.target.value)} />
         <span className="dim ml-auto">{isLoading ? "…" : `${data.length} results`}</span>
+        <ColumnSettings columns={COLUMNS} visible={columnPrefs.visible} onToggle={columnPrefs.toggle} onReset={columnPrefs.reset} />
       </div>
       {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
       <table className="data-table">
         <thead>
           <tr>
-            {th("symbol", "Sym")}
-            <th>Name</th>
-            <th>Sector</th>
-            {th("price", "Last")}
-            {th("changePercent", "Chg%")}
-            <th title={provider === "tradingview" ? "TradingView volume is traded shares/units, not USD." : "Hyperliquid dayNtlVlm is 24-hour traded notional in USD."} onClick={() => { if (sort === "volume") setDir(dir === "asc" ? "desc" : "asc"); else setSort("volume"); }}>{provider === "tradingview" ? "Vol (units)" : "Vol USD"} {sort === "volume" ? (dir === "desc" ? "▼" : "▲") : ""}</th>
-            <th title="Percent move over the selected short interval">{period}</th><th>30m</th><th>4h</th>
-            {th("marketCap", "MCap")}
+            {columnPrefs.visible.map((id) => id === "symbol" ? th("symbol", "Sym")
+              : id === "name" ? <th key={id}>Name</th>
+              : id === "sector" ? <th key={id}>Provider / sector</th>
+              : id === "price" ? th("price", "Last")
+              : id === "change" ? th("changePercent", "Chg%")
+              : id === "volume" ? <th key={id} title={provider === "tradingview" ? "TradingView volume is traded shares/units, not USD." : "Volume is 24-hour traded notional in USD/USDT."} onClick={() => { if (sort === "volume") setDir(dir === "asc" ? "desc" : "asc"); else setSort("volume"); }}>{provider === "tradingview" ? "Vol (units)" : "Vol USD"} {sort === "volume" ? (dir === "desc" ? "▼" : "▲") : ""}</th>
+              : id === "intraday" ? <th key={id} title="Percent move over selected short interval">{period}</th>
+              : id === "30m" ? <th key={id}>30m</th>
+              : id === "4h" ? <th key={id}>4h</th>
+              : th("marketCap", "MCap"))}
           </tr>
         </thead>
         <tbody>
           {visibleRows.map((q) => (
             <tr key={q.symbol} onClick={() => setActiveSymbol(q.symbol)}>
-              <td className="font-bold">{q.symbol}</td>
-              <td className="!text-left max-w-40 truncate">{q.name}</td>
-              <td className="!text-left dim">{q.sector}</td>
-              <td><Flash value={q.price}>{fmt(q.price)}</Flash></td>
-              <td className={pctClass(q.changePercent)}>
+              {columnPrefs.visible.map((id) => id === "symbol" ? <td key={id} className="font-bold">{q.symbol}</td>
+              : id === "name" ? <td key={id} className="!text-left max-w-40 truncate">{q.name}</td>
+              : id === "sector" ? <td key={id} className="!text-left dim">{q.sector}</td>
+              : id === "price" ? <td key={id}><Flash value={q.price}>{fmt(q.price)}</Flash></td>
+              : id === "change" ? <td key={id} className={pctClass(q.changePercent)}>
                 <Flash value={q.changePercent}>{fmt(q.changePercent)}%</Flash>
               </td>
-              <td>{fmtBig(q.volume)}</td>
-              {[period, "30m", "4h"].map((key) => {
+              : id === "volume" ? <td key={id}>{fmtBig(q.volume)}</td>
+              : id === "intraday" || id === "30m" || id === "4h" ? (() => {
+                const key = id === "intraday" ? period : id;
                 const change = shortChanges[q.symbol]?.[key];
-                return <td key={key} className={pctClass(change)}><Flash value={change}>{change == null ? "—" : `${fmt(change)}%`}</Flash></td>;
-              })}
-              <td>{fmtBig(q.marketCap)}</td>
+                return <td key={id} className={pctClass(change)}><Flash value={change}>{change == null ? "—" : `${fmt(change)}%`}</Flash></td>;
+              })()
+              : <td key={id}>{fmtBig(q.marketCap)}</td>)}
             </tr>
           ))}
         </tbody>

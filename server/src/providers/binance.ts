@@ -107,3 +107,80 @@ export async function history(symbol: string, rangeKey: string): Promise<Candle[
     volume: +r[5],
   }));
 }
+
+// Public, read-only Binance USDⓈ-M perpetual market data. The BNF: namespace
+// keeps futures instruments distinct from Binance spot pairs throughout the app.
+export function parseFuturesSymbol(input: string): string | null {
+  const match = /^BNF:([A-Z0-9]{2,32})$/.exec(input.trim().toUpperCase());
+  return match ? match[1] : null;
+}
+
+type FuturesSymbolInfo = { symbol: string; baseAsset: string; quoteAsset: string; contractType: string; status: string };
+let futuresInfoCache: { at: number; symbols: FuturesSymbolInfo[] } | null = null;
+async function futuresExchangeSymbols(): Promise<FuturesSymbolInfo[]> {
+  if (futuresInfoCache && Date.now() - futuresInfoCache.at < 300_000) return futuresInfoCache.symbols;
+  const res = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo");
+  if (!res.ok) throw new Error(`binance futures exchangeInfo ${res.status}`);
+  const payload = await res.json() as { symbols: FuturesSymbolInfo[] };
+  futuresInfoCache = { at: Date.now(), symbols: payload.symbols };
+  return payload.symbols;
+}
+
+export async function futuresMarkets(): Promise<CryptoRow[]> {
+  const [symbols, tickerRes] = await Promise.all([
+    futuresExchangeSymbols(), fetch("https://fapi.binance.com/fapi/v1/ticker/24hr"),
+  ]);
+  if (!tickerRes.ok) throw new Error(`binance futures ticker ${tickerRes.status}`);
+  const tickers = await tickerRes.json() as Array<{ symbol: string; lastPrice: string; priceChangePercent: string; quoteVolume: string }>;
+  const eligible = new Map(symbols.filter((s) => s.status === "TRADING" && s.contractType === "PERPETUAL" && s.quoteAsset === "USDT").map((s) => [s.symbol, s]));
+  return tickers.flatMap((r) => {
+    const market = eligible.get(r.symbol);
+    if (!market) return [];
+    return [{
+      id: `binance-futures:${r.symbol}`, symbol: `BNF:${r.symbol}`,
+      name: `${market.baseAsset}/USDT Perpetual`, price: Number(r.lastPrice),
+      changePercent24h: Number(r.priceChangePercent), marketCap: null,
+      volume24h: Number(r.quoteVolume), rank: null, sparkline: [],
+    }];
+  }).sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0));
+}
+
+export async function futuresQuote(input: string): Promise<Quote> {
+  const symbol = parseFuturesSymbol(input);
+  if (!symbol) throw new Error("invalid Binance futures symbol");
+  const [tickerRes, symbols] = await Promise.all([
+    fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${encodeURIComponent(symbol)}`),
+    futuresExchangeSymbols(),
+  ]);
+  if (!tickerRes.ok) throw new Error(`binance futures ticker ${tickerRes.status}`);
+  const d = await tickerRes.json() as any;
+  const base = symbols.find((s) => s.symbol === symbol)?.baseAsset ?? symbol.replace(/USDT$/, "");
+  return {
+    symbol: input.toUpperCase(), name: `${base}/USDT Perpetual`, price: +d.lastPrice,
+    change: +d.priceChange, changePercent: +d.priceChangePercent, open: +d.openPrice,
+    high: +d.highPrice, low: +d.lowPrice, previousClose: +d.prevClosePrice,
+    bid: +d.bidPrice || null, ask: +d.askPrice || null, volume: +d.quoteVolume,
+    avgVolume: null, marketCap: null, pe: null, eps: null, dividendYield: null,
+    week52High: null, week52Low: null, beta: null, sharesOutstanding: null,
+    currency: "USDT", exchange: "Binance USDⓈ-M", marketState: "Open", time: null, source: "binance-futures",
+  };
+}
+
+export async function futuresHistory(input: string, rangeKey: string): Promise<Candle[]> {
+  const symbol = parseFuturesSymbol(input);
+  if (!symbol) throw new Error("invalid Binance futures symbol");
+  const { interval, limit } = RANGE_TO_KLINE[rangeKey] ?? RANGE_TO_KLINE["6M"];
+  const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`);
+  if (!res.ok) throw new Error(`binance futures klines ${res.status}`);
+  const rows = await res.json() as any[];
+  return rows.map((r) => ({ time: Math.round(r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[7] }));
+}
+
+export async function futuresOrderBook(input: string, limit = 20): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
+  const symbol = parseFuturesSymbol(input);
+  if (!symbol) throw new Error("invalid Binance futures symbol");
+  const res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=${limit}`);
+  if (!res.ok) throw new Error(`binance futures depth ${res.status}`);
+  const d = await res.json();
+  return { bids: d.bids ?? [], asks: d.asks ?? [] };
+}

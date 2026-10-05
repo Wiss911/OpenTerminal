@@ -134,6 +134,13 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
     remaining = remaining.filter((s) => !fetched.has(s));
   }
 
+  const binanceFuturesSymbols = remaining.filter((s) => binance.parseFuturesSymbol(s));
+  if (binanceFuturesSymbols.length > 0) {
+    const results = await Promise.allSettled(binanceFuturesSymbols.map((s) => binance.futuresQuote(s)));
+    results.forEach((r, i) => { if (r.status === "fulfilled") fetched.set(binanceFuturesSymbols[i], r.value); });
+    remaining = remaining.filter((s) => !binanceFuturesSymbols.includes(s));
+  }
+
   const cryptoSymbols = remaining.filter((s) => binance.CRYPTO_SYMBOLS.has(s));
   if (cryptoSymbols.length > 0) {
     const results = await Promise.allSettled(cryptoSymbols.map((s) => binance.quote(s)));
@@ -188,7 +195,7 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   // Fill gaps Nasdaq's quote endpoints don't cover (open, P/E, EPS, dividend
   // yield, beta, shares outstanding) from TradingView's public scanner API,
   // in one batched request for every quote that resolved an exchange.
-  const needsFundamentals = [...fetched.values()].filter((q) => q.exchange && q.pe === null && q.source !== "hyperliquid");
+  const needsFundamentals = [...fetched.values()].filter((q) => q.exchange && q.pe === null && q.source !== "hyperliquid" && q.source !== "binance-futures");
   if (needsFundamentals.length > 0) {
     try {
       const fundamentals = await tradingview.scanFundamentals(
@@ -249,6 +256,8 @@ marketRouter.get("/changes", async (req, res) => {
         const values = await cached(`short-change:${symbol}`, 60_000, async () => {
         const candles = hyperliquid.parseSymbol(symbol)
           ? await hyperliquid.history(symbol, "1D")
+          : binance.parseFuturesSymbol(symbol)
+          ? await binance.futuresHistory(symbol, "1D")
           : binance.CRYPTO_SYMBOLS.has(symbol)
           ? await binance.history(symbol, "1D")
           : await withFallback([
@@ -290,6 +299,8 @@ marketRouter.get("/history/:symbol", async (req, res) => {
     const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
       hyperliquid.parseSymbol(symbol)
         ? hyperliquid.history(symbol, rangeKey)
+        : binance.parseFuturesSymbol(symbol)
+        ? binance.futuresHistory(symbol, rangeKey)
         : binance.CRYPTO_SYMBOLS.has(symbol)
         ? binance.history(symbol, rangeKey)
         : isVix(symbol)
@@ -423,6 +434,11 @@ marketRouter.get("/crypto", async (req, res) => {
   }
 });
 
+marketRouter.get("/crypto/binance-futures", async (_req, res) => {
+  try { res.json(await cached("binance:futures:markets", 60_000, () => binance.futuresMarkets())); }
+  catch (err) { fail(_req, res, err); }
+});
+
 // ---- Hyperliquid perpetual markets (read-only public info endpoint) ----
 
 marketRouter.get("/crypto/hyperliquid/dexes", async (_req, res) => {
@@ -451,6 +467,13 @@ marketRouter.get("/crypto/hyperliquid/orderbook/:symbol", async (req, res) => {
   } catch (err) {
     fail(req, res, err);
   }
+});
+
+marketRouter.get("/crypto/binance-futures/orderbook/:symbol", async (req, res) => {
+  const symbol = `BNF:${req.params.symbol}`;
+  if (!binance.parseFuturesSymbol(symbol)) return res.status(400).json({ error: "invalid Binance futures symbol" });
+  try { res.json(await cached(`binance-futures:orderbook:${symbol}`, 3_000, () => binance.futuresOrderBook(symbol))); }
+  catch (err) { fail(req, res, err); }
 });
 
 marketRouter.get("/crypto/global", async (req, res) => {
@@ -647,6 +670,11 @@ marketRouter.get("/screener", async (req, res) => {
     let rows: tradingview.MarketRow[];
     if (provider === "tradingview") {
       rows = await marketRows(marketParam(req));
+    } else if (provider === "binance-futures") {
+      rows = (await cached("binance:futures:markets", 60_000, () => binance.futuresMarkets())).map((r) => ({
+        symbol: r.symbol, name: r.name, sector: "Binance USDⓈ-M Perpetuals",
+        price: r.price, changePercent: r.changePercent24h, volume: r.volume24h, marketCap: null, exchange: "Binance",
+      }));
     } else if (provider === "hyperliquid-perps") {
       rows = (await cached("hyperliquid:screener:perps", 60_000, () => hyperliquid.markets(""))).map((r) => ({
         symbol: `HL:${r.symbol}`, name: r.name, sector: "Hyperliquid Perpetuals",
