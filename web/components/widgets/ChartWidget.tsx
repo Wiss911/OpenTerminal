@@ -11,29 +11,35 @@ import {
   LineStyle,
   BarSeries,
   type IChartApi,
+  type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { EMA, VWAP, Supertrend, WaveTrend } from "lightweight-charts-indicators";
+import { EMA, VWAP, Supertrend, WaveTrend, indicatorRegistry } from "lightweight-charts-indicators";
 import { apiGet, fmt, fmtBig, type Candle } from "../../lib/api";
 import { sma, dailyProfileLevels, rsi, macd, bollinger, type Point } from "../../lib/indicators";
+import { VolumeProfilePrimitive, type ProfileBox } from "../../lib/volumeProfilePrimitive";
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 
 const RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
+const TIMEFRAMES = ["Auto", "1m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1w"] as const;
 const CHART_TYPES = ["candles", "bars", "line", "area"] as const;
-const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA20", "EMA50", "EMA200", "WVWAP", "SUPERTREND", "WAVETREND", "POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL", "BOLL", "RSI", "MACD"] as const;
+const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA20", "EMA50", "EMA200", "WVWAP", "SUPERTREND", "WAVETREND", "POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL", "FRVP", "PVP", "BOLL", "RSI", "MACD"] as const;
 
 type Range = (typeof RANGES)[number];
+type Timeframe = (typeof TIMEFRAMES)[number];
 type ChartType = (typeof CHART_TYPES)[number];
 type Indicator = (typeof INDICATORS)[number];
 
 const ts = (t: number) => t as UTCTimestamp;
-const toMap = (pts: Point[]) => new Map(pts.map((p) => [p.time, p.value]));
+const toMap = (pts: Point[]) => new Map(pts.filter((p) => p != null && Number.isFinite(p.time) && Number.isFinite(p.value)).map((p) => [p.time, p.value]));
 
 const INDICATOR_COLOR: Record<string, string> = {
   SMA20: "#ffd966", SMA50: "#4fc3f7", SMA200: "#ba68c8", EMA20: "#ff8a65", EMA50: "#4fc3f7", EMA200: "#ba68c8",
   WVWAP: "#26a69a", WVWAP_U: "#80cbc4", WVWAP_L: "#80cbc4", SUPERTREND_UP: "#26a69a", SUPERTREND_DOWN: "#ef5350", WAVETREND: "#26a69a", WAVETREND_SIGNAL: "#b0bec5", POC: "#ff5252", VAH: "#ab47bc", VAL: "#ab47bc",
-  PDPOC: "#ef5350", PDVAH: "#7e57c2", PDVAL: "#7e57c2", RSI: "#ff9900", BOLL: "#ff9900", MACD: "#4fc3f7", MACD_SIGNAL: "#b0bec5",
+  PDPOC: "#ef5350", PDVAH: "#7e57c2", PDVAL: "#7e57c2", FRVP_VAL: "#4caf50", FRVP_VAH: "#ff9800", FRVP_POC: "#f23645", RSI: "#ff9900", BOLL: "#ff9900", MACD: "#4fc3f7", MACD_SIGNAL: "#b0bec5",
 };
+const FRVP_INDICATOR = indicatorRegistry.find((entry) => entry.id === "fixed-range-volume-profile-zones");
+const PVP_INDICATOR = indicatorRegistry.find((entry) => entry.id === "price-volume-profile");
 type UserLineStyle = "solid" | "dotted" | "dashed";
 type LineConfig = { color: string; width: number; style: UserLineStyle };
 const DEFAULT_LINE_CONFIGS: Record<string, LineConfig> = Object.fromEntries(
@@ -41,7 +47,7 @@ const DEFAULT_LINE_CONFIGS: Record<string, LineConfig> = Object.fromEntries(
 );
 const SHARED_SETTINGS_KEY = "openterminal:chart-settings:shared";
 const SETTINGS_EVENT = "openterminal:chart-settings-changed";
-const DEFAULT_INDICATOR_PARAMS = { sma20: 20, sma50: 50, sma200: 200, ema20: 20, ema50: 50, ema200: 200, vwapDeviation: 1, supertrendAtr: 10, supertrendFactor: 3, waveChannel: 10, waveAverage: 21, bollPeriod: 20, bollMult: 2, rsiPeriod: 14, macdFast: 12, macdSlow: 26, macdSignal: 9, profileBins: 48 };
+const DEFAULT_INDICATOR_PARAMS = { sma20: 20, sma50: 50, sma200: 200, ema20: 20, ema50: 50, ema200: 200, vwapDeviation: 1, supertrendAtr: 10, supertrendFactor: 3, waveChannel: 10, waveAverage: 21, bollPeriod: 20, bollMult: 2, rsiPeriod: 14, macdFast: 12, macdSlow: 26, macdSignal: 9, profileBins: 48, frvpLookback: 30, pvpLookback: 200 };
 type IndicatorParams = typeof DEFAULT_INDICATOR_PARAMS;
 
 const validInt = (value: unknown, min: number, max: number, fallback: number) =>
@@ -49,14 +55,50 @@ const validInt = (value: unknown, min: number, max: number, fallback: number) =>
 const validNumber = (value: unknown, min: number, max: number, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 const fromPlot = (plots: Record<string, Point[]>, plot: string) =>
-  (plots[plot] ?? []).filter((point) => Number.isFinite(point.value));
+  (plots[plot] ?? []).filter((point) => point != null && typeof point.time === "number" && Number.isFinite(point.time) && typeof point.value === "number" && Number.isFinite(point.value));
+
+type ChartSeries = Pick<ISeriesApi<"Candlestick">, "priceToCoordinate" | "attachPrimitive">;
+
+function candleCloseTime(lastOpenSeconds: number, range: Range, timeframe: Timeframe, symbol: string): number {
+  const crypto = /^(HL:|BNF:|BTC$|ETH$|SOL$|BNB$|XRP$|ADA$|DOGE$|AVAX$|DOT$|LINK$|LTC$|MATIC$)/i.test(symbol);
+  const autoIntervals = crypto
+    ? ({ "1D": "5m", "5D": "15m", "1M": "1h", "6M": "4h", YTD: "1d", "1Y": "1d", "5Y": "1w", MAX: "1M" } as const)
+    : ({ "1D": "1d", "5D": "1d", "1M": "1h", "6M": "1d", YTD: "1d", "1Y": "1d", "5Y": "1w", MAX: "1M" } as const);
+  const selected = timeframe === "Auto" ? autoIntervals[range] : timeframe;
+  const openMs = lastOpenSeconds * 1_000;
+  if (selected === "1M") {
+    const open = new Date(openMs);
+    return Date.UTC(open.getUTCFullYear(), open.getUTCMonth() + 1, 1);
+  }
+  if (selected === "1w") {
+    const daySeconds = 86_400;
+    const day = Math.floor(lastOpenSeconds / daySeconds);
+    const daysUntilMonday = (7 - ((day + 3) % 7)) % 7 || 7;
+    return (day + daysUntilMonday) * daySeconds * 1_000;
+  }
+  const seconds: Record<string, number> = { "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800, "1h": 3_600, "2h": 7_200, "4h": 14_400, "6h": 21_600, "8h": 28_800, "12h": 43_200, "1d": 86_400, "3d": 259_200 };
+  const interval = seconds[selected] ?? 86_400;
+  return (Math.floor(lastOpenSeconds / interval) * interval + interval) * 1_000;
+}
+
+function countdownLabel(closeAtMs: number, nowMs: number): string {
+  const total = Math.max(0, Math.ceil((closeAtMs - nowMs) / 1_000));
+  const days = Math.floor(total / 86_400);
+  const hours = Math.floor((total % 86_400) / 3_600);
+  const minutes = Math.floor((total % 3_600) / 60);
+  const seconds = total % 60;
+  return days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
 export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
   const [range, setRange] = useState<Range>("6M");
+  const [timeframe, setTimeframe] = useState<Timeframe>("Auto");
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [active, setActive] = useState<Set<Indicator>>(new Set(["EMA20"]));
   const [legend, setLegend] = useState<Candle | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  const [countdownY, setCountdownY] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lineConfigs, setLineConfigs] = useState<Record<string, LineConfig>>(DEFAULT_LINE_CONFIGS);
   const [indicatorParams, setIndicatorParams] = useState<IndicatorParams>(DEFAULT_INDICATOR_PARAMS);
@@ -67,6 +109,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const [settingsReady, setSettingsReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const priceSeriesRef = useRef<ChartSeries | null>(null);
+  const viewportRef = useRef<{ key: string; from: number; to: number; count: number; followingLatest: boolean } | null>(null);
   const settingsKey = SHARED_SETTINGS_KEY;
   const chartSettingsRef = useRef({ chartBackground, themePanel, rightOffset });
 
@@ -94,9 +138,13 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     try {
       const saved = localStorage.getItem(settingsKey);
       if (saved) {
-        const parsed = JSON.parse(saved) as { background?: string; rightOffset?: number; lineConfigs?: Record<string, LineConfig>; indicatorParams?: Partial<IndicatorParams> };
+        const parsed = JSON.parse(saved) as { background?: string; rightOffset?: number; lineConfigs?: Record<string, LineConfig>; indicatorParams?: Partial<IndicatorParams>; active?: unknown; range?: unknown; chartType?: unknown; timeframe?: unknown };
         if (typeof parsed.background === "string" && /^#[0-9a-f]{6}$/i.test(parsed.background) && parsed.background.toLowerCase() !== "#0a0a0a") setChartBackground(parsed.background);
         if (typeof parsed.rightOffset === "number" && Number.isFinite(parsed.rightOffset)) setRightOffset(Math.max(0, Math.min(20, parsed.rightOffset)));
+        if (Array.isArray(parsed.active)) setActive(new Set(parsed.active.filter((item): item is Indicator => typeof item === "string" && (INDICATORS as readonly string[]).includes(item))));
+        if (typeof parsed.range === "string" && (RANGES as readonly string[]).includes(parsed.range)) setRange(parsed.range as Range);
+        if (typeof parsed.chartType === "string" && (CHART_TYPES as readonly string[]).includes(parsed.chartType)) setChartType(parsed.chartType as ChartType);
+        if (typeof parsed.timeframe === "string" && (TIMEFRAMES as readonly string[]).includes(parsed.timeframe)) setTimeframe(parsed.timeframe as Timeframe);
         if (parsed.lineConfigs && typeof parsed.lineConfigs === "object") setLineConfigs((current) => {
           const next = { ...current };
           for (const [name, value] of Object.entries(parsed.lineConfigs!)) {
@@ -116,6 +164,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
           rsiPeriod: validInt(parsed.indicatorParams.rsiPeriod, 2, 100, 14), macdFast: validInt(parsed.indicatorParams.macdFast, 2, 100, 12),
           macdSlow: validInt(parsed.indicatorParams.macdSlow, 3, 200, 26), macdSignal: validInt(parsed.indicatorParams.macdSignal, 2, 100, 9),
           profileBins: validInt(parsed.indicatorParams.profileBins, 8, 128, 48),
+          frvpLookback: validInt(parsed.indicatorParams.frvpLookback, 5, 5000, 30),
+          pvpLookback: validInt(parsed.indicatorParams.pvpLookback, 10, 5000, 200),
         });
       }
     } catch { /* Keep usable defaults when local settings are unavailable. */ }
@@ -124,8 +174,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
   useEffect(() => {
     const syncSettings = (event?: Event) => {
-      const custom = event as CustomEvent<{ background?: string | null; rightOffset?: number; lineConfigs?: Record<string, LineConfig>; indicatorParams?: Partial<IndicatorParams> }> | undefined;
-      const saved = custom?.detail ?? (() => {
+      const custom = event as CustomEvent<{ background?: string | null; rightOffset?: number; lineConfigs?: Record<string, LineConfig>; indicatorParams?: Partial<IndicatorParams>; active?: unknown; range?: unknown; chartType?: unknown; timeframe?: unknown }> | undefined;
+      const saved: { background?: string | null; rightOffset?: number; lineConfigs?: Record<string, LineConfig>; indicatorParams?: Partial<IndicatorParams>; active?: unknown; range?: unknown; chartType?: unknown; timeframe?: unknown } | null = custom?.detail ?? (() => {
         try { return JSON.parse(localStorage.getItem(settingsKey) ?? "null"); } catch { return null; }
       })();
       if (!saved) return;
@@ -134,6 +184,13 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       if (typeof saved.rightOffset === "number") setRightOffset((current) => current === validInt(saved.rightOffset, 0, 20, 5) ? current : validInt(saved.rightOffset, 0, 20, 5));
       if (saved.lineConfigs) setLineConfigs((current) => JSON.stringify(current) === JSON.stringify({ ...current, ...saved.lineConfigs }) ? current : ({ ...current, ...saved.lineConfigs }));
       if (saved.indicatorParams) setIndicatorParams((current) => JSON.stringify(current) === JSON.stringify({ ...current, ...saved.indicatorParams }) ? current : ({ ...current, ...saved.indicatorParams }));
+      if (Array.isArray(saved.active)) {
+        const next = saved.active.filter((item: unknown): item is Indicator => typeof item === "string" && (INDICATORS as readonly string[]).includes(item));
+        setActive((current) => [...current].sort().join("|") === [...next].sort().join("|") ? current : new Set(next));
+      }
+      if (typeof saved.range === "string" && (RANGES as readonly string[]).includes(saved.range)) setRange((current) => current === saved.range ? current : saved.range as Range);
+      if (typeof saved.chartType === "string" && (CHART_TYPES as readonly string[]).includes(saved.chartType)) setChartType((current) => current === saved.chartType ? current : saved.chartType as ChartType);
+      if (typeof saved.timeframe === "string" && (TIMEFRAMES as readonly string[]).includes(saved.timeframe)) setTimeframe((current) => current === saved.timeframe ? current : saved.timeframe as Timeframe);
     };
     window.addEventListener("storage", syncSettings);
     window.addEventListener(SETTINGS_EVENT, syncSettings);
@@ -146,22 +203,34 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   useEffect(() => {
     if (!settingsReady) return;
     try {
-      const saved = { ...(chartBackground ? { background: chartBackground } : {}), rightOffset, lineConfigs, indicatorParams };
+      const saved = { ...(chartBackground ? { background: chartBackground } : {}), rightOffset, lineConfigs, indicatorParams, active: [...active], range, chartType, timeframe };
       localStorage.setItem(settingsKey, JSON.stringify(saved));
       window.dispatchEvent(new CustomEvent(SETTINGS_EVENT, { detail: saved }));
     }
     catch { /* Settings remain active for this session when storage is unavailable. */ }
-  }, [chartBackground, rightOffset, settingsKey, settingsReady, lineConfigs, indicatorParams]);
+  }, [chartBackground, rightOffset, settingsKey, settingsReady, lineConfigs, indicatorParams, active, range, chartType, timeframe]);
 
   useEffect(() => {
     chartSettingsRef.current = { chartBackground, themePanel, rightOffset };
   }, [chartBackground, themePanel, rightOffset]);
 
   const { data: candles, error } = useQuery({
-    queryKey: ["history", symbol, range],
-    queryFn: () => apiGet<Candle[]>(`/api/history/${symbol}?range=${range}`),
-    refetchInterval: range === "1D" ? 8_000 : 60_000,
+    queryKey: ["history", symbol, range, timeframe],
+    queryFn: () => apiGet<Candle[]>(`/api/history/${symbol}?range=${range}${timeframe === "Auto" ? "" : `&interval=${encodeURIComponent(timeframe)}`}`),
+    refetchInterval: range === "1D" || (timeframe !== "Auto" && ["1m", "5m", "15m"].includes(timeframe)) ? 8_000 : 60_000,
+    enabled: settingsReady,
   });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const last = candles?.[candles.length - 1];
+    const frame = requestAnimationFrame(() => setCountdownY(last && priceSeriesRef.current ? priceSeriesRef.current.priceToCoordinate(last.close) : null));
+    return () => cancelAnimationFrame(frame);
+  }, [clockNow, candles, chartType, themeRevision]);
 
   // Fast time -> candle lookup for the crosshair legend, independent of chart type.
   const byTime = useMemo(() => {
@@ -179,6 +248,9 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const vwap = active.has("WVWAP") ? VWAP.calculate(bars, { anchor: "1W", showBands: true, bandMult: indicatorParams.vwapDeviation }).plots : null;
     const supertrend = active.has("SUPERTREND") ? Supertrend.calculate(bars, { atrPeriod: indicatorParams.supertrendAtr, factor: indicatorParams.supertrendFactor }).plots : null;
     const wave = active.has("WAVETREND") ? WaveTrend.calculate(bars, { channelLength: indicatorParams.waveChannel, averageLength: indicatorParams.waveAverage }).plots : null;
+    const frvp = active.has("FRVP") && FRVP_INDICATOR ? FRVP_INDICATOR.calculate(bars, { lookbackDays: Math.min(indicatorParams.frvpLookback, bars.length), numBins: indicatorParams.profileBins, percentileUpper: 95, percentileLower: 5 }) : null;
+    const pvp = active.has("PVP") && PVP_INDICATOR ? PVP_INDICATOR.calculate(bars, { rows: indicatorParams.profileBins, display: "Volume", lookback: Math.min(indicatorParams.pvpLookback, bars.length), poc: true }) : null;
+    const pvpBoxes: ProfileBox[] = Array.isArray(pvp?.boxes) ? pvp.boxes.filter((box: ProfileBox) => box && [box.time1, box.time2, box.price1, box.price2].every((value) => typeof value === "number" && Number.isFinite(value))) : [];
     return {
       SMA20: active.has("SMA20") ? sma(candles, indicatorParams.sma20) : null,
       SMA50: active.has("SMA50") ? sma(candles, indicatorParams.sma50) : null,
@@ -189,6 +261,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       WVWAP: vwap ? { center: fromPlot(vwap, "plot0"), upper: fromPlot(vwap, "plot1"), lower: fromPlot(vwap, "plot2") } : null,
       SUPERTREND: supertrend ? { up: fromPlot(supertrend, "plot0"), down: fromPlot(supertrend, "plot1") } : null,
       WAVETREND: wave ? { wt1: fromPlot(wave, "plot0"), wt2: fromPlot(wave, "plot1") } : null,
+      FRVP: frvp ? { val: fromPlot(frvp.plots ?? {}, "plot0"), vah: fromPlot(frvp.plots ?? {}, "plot1"), poc: fromPlot(frvp.plots ?? {}, "plot2") } : null,
+      PVP: pvpBoxes,
       PROFILE: (active.has("POC") || active.has("VAH") || active.has("VAL") || active.has("PDPOC") || active.has("PDVAH") || active.has("PDVAL")) ? dailyProfileLevels(candles, indicatorParams.profileBins) : null,
       RSI: active.has("RSI") ? rsi(candles, indicatorParams.rsiPeriod) : null,
       BOLL: active.has("BOLL") ? bollinger(candles, indicatorParams.bollPeriod, indicatorParams.bollMult) : null,
@@ -212,6 +286,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     }
     if (indicatorData.SUPERTREND) { maps.SUPERTREND_U = toMap(indicatorData.SUPERTREND.up); maps.SUPERTREND_D = toMap(indicatorData.SUPERTREND.down); }
     if (indicatorData.WAVETREND) { maps.WAVETREND_1 = toMap(indicatorData.WAVETREND.wt1); maps.WAVETREND_2 = toMap(indicatorData.WAVETREND.wt2); }
+    if (indicatorData.FRVP) { maps.FRVP_VAL = toMap(indicatorData.FRVP.val); maps.FRVP_VAH = toMap(indicatorData.FRVP.vah); maps.FRVP_POC = toMap(indicatorData.FRVP.poc); }
     if (indicatorData.PROFILE) for (const key of ["POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL"] as const) maps[key] = toMap(indicatorData.PROFILE[key]);
     if (indicatorData.RSI) maps.RSI = toMap(indicatorData.RSI);
     if (indicatorData.BOLL) {
@@ -232,14 +307,14 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const t = legend.time;
     const get = (key: string) => indicatorMaps[key]?.get(t);
     const rows: Array<{ label: string; value: string; color: string }> = [];
-    for (const key of ["SMA20", "SMA50", "SMA200", "EMA20", "EMA50", "EMA200", "WVWAP", "WVWAP_U", "WVWAP_L", "POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL"] as const) {
+    for (const key of ["SMA20", "SMA50", "SMA200", "EMA20", "EMA50", "EMA200", "WVWAP", "WVWAP_U", "WVWAP_L", "POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL", "FRVP_VAL", "FRVP_VAH", "FRVP_POC"] as const) {
       const v = get(key);
-      if (v !== undefined) rows.push({ label: key, value: fmt(v), color: lineConfigs[key]?.color ?? INDICATOR_COLOR[key] });
+      if (typeof v === "number" && Number.isFinite(v)) rows.push({ label: key, value: fmt(v), color: lineConfigs[key]?.color ?? INDICATOR_COLOR[key] });
     }
     const rsiV = get("RSI");
-    if (rsiV !== undefined) rows.push({ label: "RSI", value: fmt(rsiV, 1), color: INDICATOR_COLOR.RSI });
+    if (typeof rsiV === "number" && Number.isFinite(rsiV)) rows.push({ label: "RSI", value: fmt(rsiV, 1), color: INDICATOR_COLOR.RSI });
     const bollM = get("BOLL_M");
-    if (bollM !== undefined) {
+    if (typeof bollM === "number" && Number.isFinite(bollM) && Number.isFinite(get("BOLL_U")) && Number.isFinite(get("BOLL_L"))) {
       rows.push({
         label: "BOLL",
         value: `${fmt(get("BOLL_U"))} / ${fmt(bollM)} / ${fmt(get("BOLL_L"))}`,
@@ -247,7 +322,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       });
     }
     const macdM = get("MACD_M");
-    if (macdM !== undefined) {
+    if (typeof macdM === "number" && Number.isFinite(macdM) && Number.isFinite(get("MACD_S")) && Number.isFinite(get("MACD_H"))) {
       rows.push({
         label: "MACD",
         value: `${fmt(macdM, 2)} / ${fmt(get("MACD_S"), 2)} / ${fmt(get("MACD_H"), 2)}`,
@@ -285,7 +360,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       layout: { background: { color: chartSettings.chartBackground ?? chartSettings.themePanel }, textColor: chartText, fontSize: 10, attributionLogo: false },
       grid: { vertLines: { color: chartGrid }, horzLines: { color: chartGrid } },
       crosshair: { mode: 0 },
-      timeScale: { borderColor: chartBorder, timeVisible: range === "1D" || range === "5D", rightOffset: chartSettings.rightOffset },
+      timeScale: { borderColor: chartBorder, timeVisible: timeframe === "Auto" ? range === "1D" || range === "5D" : !["1d", "1w"].includes(timeframe), rightOffset: chartSettings.rightOffset },
       rightPriceScale: { borderColor: chartBorder },
       autoSize: true,
       // Mouse-wheel is left free for page scrolling — zoom via drag, pinch, or the range buttons instead.
@@ -295,24 +370,24 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     chartRef.current = chart;
 
     if (chartType === "candles") {
-      chart
-        .addSeries(CandlestickSeries, {
+      const primary = chart.addSeries(CandlestickSeries, {
           upColor, downColor, borderUpColor: upColor, borderDownColor: downColor,
           wickUpColor: upColor, wickDownColor: downColor,
-        })
-        .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+        });
+      priceSeriesRef.current = primary;
+      primary.setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
     } else if (chartType === "bars") {
-      chart
-        .addSeries(BarSeries, { upColor, downColor })
-        .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+      const primary = chart.addSeries(BarSeries, { upColor, downColor });
+      priceSeriesRef.current = primary;
+      primary.setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
     } else if (chartType === "line") {
-      chart
-        .addSeries(LineSeries, { color: accent, lineWidth: 1 })
-        .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
+      const primary = chart.addSeries(LineSeries, { color: accent, lineWidth: 1 });
+      priceSeriesRef.current = primary;
+      primary.setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     } else {
-      chart
-        .addSeries(AreaSeries, { lineColor: accent, topColor: accentSoft, bottomColor: accentTransparent })
-        .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
+      const primary = chart.addSeries(AreaSeries, { lineColor: accent, topColor: accentSoft, bottomColor: accentTransparent });
+      priceSeriesRef.current = primary;
+      primary.setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     }
 
     // volume histogram on its own scale at the bottom of the main pane
@@ -326,7 +401,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       const config = lineConfigs[key] ?? DEFAULT_LINE_CONFIGS[key] ?? { color: colorOverride ?? accent, width: 1, style: "solid" as const };
       const styles = { solid: LineStyle.Solid, dotted: LineStyle.Dotted, dashed: LineStyle.Dashed };
       chart.addSeries(LineSeries, { color: colorOverride ?? config.color, lineWidth: config.width as 1 | 2 | 3 | 4, lineStyle: styles[config.style], priceLineVisible: false, lastValueVisible: false })
-        .setData(points.map((p) => ({ time: ts(p.time), value: p.value })));
+        .setData(points.filter((p) => p != null && Number.isFinite(p.time) && Number.isFinite(p.value)).map((p) => ({ time: ts(p.time), value: p.value })));
     };
 
     if (indicatorData?.SMA20) overlay(indicatorData.SMA20, "SMA20");
@@ -346,6 +421,16 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     }
     if (indicatorData?.PROFILE) for (const key of ["POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL"] as const) {
       if (active.has(key)) overlay(indicatorData.PROFILE[key], key);
+    }
+    if (indicatorData?.FRVP) {
+      if (active.has("FRVP")) {
+        overlay(indicatorData.FRVP.val, "FRVP_VAL");
+        overlay(indicatorData.FRVP.vah, "FRVP_VAH");
+        overlay(indicatorData.FRVP.poc, "FRVP_POC");
+      }
+    }
+    if (indicatorData?.PVP && indicatorData.PVP.length > 0 && priceSeriesRef.current) {
+      priceSeriesRef.current.attachPrimitive(new VolumeProfilePrimitive(indicatorData.PVP));
     }
     if (indicatorData?.BOLL) {
       overlay(indicatorData.BOLL.upper, "BOLL");
@@ -388,12 +473,32 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       if (hit) setLegend(hit);
     });
 
-    chart.timeScale().fitContent();
+    const viewKey = `${symbol}|${range}|${timeframe}`;
+    const previousView = viewportRef.current?.key === viewKey ? viewportRef.current : null;
+    const addedCandles = previousView ? candles.length - previousView.count : 0;
+    if (previousView) {
+      const offset = previousView.followingLatest ? addedCandles : 0;
+      chart.timeScale().setVisibleLogicalRange({ from: previousView.from + offset, to: previousView.to + offset });
+    } else {
+      chart.timeScale().fitContent();
+    }
+    const recordViewport = (logicalRange: { from: number; to: number } | null) => {
+      if (!logicalRange) return;
+      viewportRef.current = {
+        key: viewKey, from: logicalRange.from, to: logicalRange.to, count: candles.length,
+        followingLatest: logicalRange.to >= candles.length - 2,
+      };
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(recordViewport);
+    recordViewport(chart.timeScale().getVisibleLogicalRange());
     return () => {
+      const visible = chart.timeScale().getVisibleLogicalRange();
+      recordViewport(visible);
       chart.remove();
       chartRef.current = null;
+      priceSeriesRef.current = null;
     };
-  }, [candles, chartType, indicatorData, range, byTime, themeRevision, lineConfigs, active]);
+  }, [candles, chartType, indicatorData, range, timeframe, symbol, byTime, themeRevision, lineConfigs, active]);
 
   useEffect(() => {
     chartRef.current?.applyOptions({
@@ -426,10 +531,16 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
         ))}
         <span className="w-2" />
         {INDICATORS.map((ind) => (
-          <button key={ind} className={`term-btn ${active.has(ind) ? "active" : ""}`} onClick={() => toggleIndicator(ind)}>
+          <button key={ind} className={`term-btn ${active.has(ind) ? "active" : ""}`} onClick={() => toggleIndicator(ind)} title={ind === "FRVP" ? "Fixed-Range Volume-Profile Zones (Community-Indikator)" : ind === "PVP" ? "Price & Volume Profile (Expo, Community-Indikator)" : ["POC", "VAH", "VAL", "PDPOC", "PDVAH", "PDVAL"].includes(ind) ? "Kerzenbasierte Schätzung: Volumen wird dem Schlusskurs-Bin zugeordnet" : ind}>
             {ind}
           </button>
         ))}
+        <label className="flex items-center gap-1 px-1 text-xs dim" title="Candle interval (independent from the visible date range)">
+          Kerzen
+          <select aria-label="Candle interval" value={timeframe} onChange={(e) => setTimeframe(e.target.value as Timeframe)} className="term-btn active">
+            {TIMEFRAMES.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
         <button className={`term-btn ml-auto ${settingsOpen ? "active" : ""}`} onClick={() => setSettingsOpen((open) => !open)} aria-label="Chart settings" title="Chart settings">
           ⚙
         </button>
@@ -465,6 +576,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
               ["bollMult", "Bollinger multiplier", 0.1, 10, 0.1], ["rsiPeriod", "RSI period", 2, 100, 1],
               ["macdFast", "MACD fast", 2, 100, 1], ["macdSlow", "MACD slow", 3, 200, 1], ["macdSignal", "MACD signal", 2, 100, 1],
               ["profileBins", "Volume Profile bins", 8, 128, 1],
+              ["frvpLookback", "FRVP zones lookback bars", 5, 5000, 1], ["pvpLookback", "PVP lookback bars", 10, 5000, 1],
             ] as Array<[keyof IndicatorParams, string, number, number, number]>).map(([key, label, min, max, step]) => (
               <label key={key} className="flex items-center justify-between gap-2">{label}
                 <input type="number" min={min} max={max} step={step} value={indicatorParams[key]} onChange={(e) => setIndicatorParams((current) => ({ ...current, [key]: step < 1 ? validNumber(Number(e.target.value), min, max, current[key]) : validInt(Number(e.target.value), min, max, current[key]) }))} className="w-20 bg-[var(--panel)] border border-[var(--border)] px-1" />
@@ -475,6 +587,14 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       )}
       {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
       <div className="relative flex-1 min-h-0">
+        {candles?.length && countdownY !== null && (() => {
+          const last = candles[candles.length - 1];
+          return (
+            <div className="absolute right-0 z-20 -translate-y-1/2 bg-[var(--amber)] px-1 py-0.5 text-[10px] font-semibold text-black pointer-events-none" style={{ top: countdownY }} title="Verbleibende Zeit bis zum Kerzenschluss">
+              {countdownLabel(candleCloseTime(last.time, range, timeframe, symbol), clockNow)}
+            </div>
+          );
+        })()}
         {legend && (
           <div className="chart-legend absolute top-1 left-2 z-10 flex flex-col gap-0.5 text-[11px] pointer-events-none px-2 py-1 rounded max-w-[95%]">
             <div className="flex gap-3">

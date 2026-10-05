@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { history, orderBook, quote } from "./binance.js";
+import { history, orderBook, quote, futuresHistory } from "./binance.js";
 
 function mockFetchOnce(body: unknown) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -42,5 +42,19 @@ describe("binance provider URL encoding", () => {
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain(encodeURIComponent("AAA&x=1".toUpperCase() + "USDT"));
     expect(url.split("&").length).toBe(3); // symbol, interval, limit only
+  });
+
+  it("uses the selected candle interval and keeps Binance's 1,000-candle cap", async () => {
+    const fetchMock = mockFetchOnce([]);
+    await history("BTC", "1D", "5m");
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("interval=5m");
+    expect(url).toContain("limit=288");
+
+    fetchMock.mockClear();
+    await futuresHistory("BNF:BTCUSDT", "6M", "1m");
+    const futuresUrl = fetchMock.mock.calls[0][0] as string;
+    expect(futuresUrl).toContain("interval=1m");
+    expect(futuresUrl).toContain("limit=1000");
   });
 });

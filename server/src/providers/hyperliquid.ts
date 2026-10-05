@@ -119,10 +119,14 @@ const RANGE_TO_CANDLE: Record<string, { interval: string; durationMs: number }> 
   MAX: { interval: "1M", durationMs: 20 * 366 * 24 * 60 * 60_000 },
 };
 
-export async function history(input: string, range: string): Promise<Candle[]> {
+export async function history(input: string, range: string, requestedInterval?: string): Promise<Candle[]> {
   const parsed = parseSymbol(input);
   if (!parsed) throw new Error("invalid Hyperliquid symbol");
-  const config = RANGE_TO_CANDLE[range] ?? RANGE_TO_CANDLE["6M"];
+  const fallback = RANGE_TO_CANDLE[range] ?? RANGE_TO_CANDLE["6M"];
+  const supportedIntervals = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d", "3d", "1w", "1M"]);
+  const config = requestedInterval && supportedIntervals.has(requestedInterval)
+    ? { ...fallback, interval: requestedInterval }
+    : fallback;
   const endTime = Date.now();
   const rows = await info<Array<{ t: number; o: string; h: string; l: string; c: string; v: string }>>({
     type: "candleSnapshot",

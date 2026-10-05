@@ -21,6 +21,45 @@ const QUOTE_TTL = 1_000;
 const HISTORY_TTL = 20_000;
 const NEWS_TTL = 60_000;
 
+function resampleCandles(candles: yahoo.Candle[], interval: "2h" | "4h" | "1w"): yahoo.Candle[] {
+  if (interval !== "1w") {
+    const groupSize = interval === "2h" ? 2 : 4;
+    const ordered = [...candles].sort((a, b) => a.time - b.time);
+    const output: yahoo.Candle[] = [];
+    let segment: yahoo.Candle[] = [];
+    const flush = () => {
+      for (let i = 0; i < segment.length; i += groupSize) {
+        const rows = segment.slice(i, i + groupSize);
+        output.push({
+          time: rows[0].time, open: rows[0].open, high: Math.max(...rows.map((row) => row.high)),
+          low: Math.min(...rows.map((row) => row.low)), close: rows[rows.length - 1].close,
+          volume: rows.reduce((total, row) => total + row.volume, 0),
+        });
+      }
+      segment = [];
+    };
+    for (const candle of ordered) {
+      if (segment.length > 0 && candle.time - segment[segment.length - 1].time > 2 * 3_600) flush();
+      segment.push(candle);
+    }
+    flush();
+    return output;
+  }
+  const size = 7 * 86_400;
+  const buckets = new Map<number, yahoo.Candle[]>();
+  for (const candle of candles) {
+    const bucket = Math.floor((candle.time / 86_400 + 3) / 7) * size - 3 * 86_400;
+    const rows = buckets.get(bucket) ?? [];
+    rows.push(candle);
+    buckets.set(bucket, rows);
+  }
+  return [...buckets.entries()].sort(([a], [b]) => a - b).map(([time, rows]) => ({
+    time, open: rows[0].open, high: Math.max(...rows.map((row) => row.high)),
+    low: Math.min(...rows.map((row) => row.low)), close: rows[rows.length - 1].close,
+    volume: rows.reduce((total, row) => total + row.volume, 0),
+  }));
+}
+
 function fail(req: any, res: any, err: unknown) {
   const detail = err instanceof Error ? err.message : String(err);
   console.error("[market]", req.path, detail);
@@ -295,16 +334,23 @@ marketRouter.get("/changes", async (req, res) => {
 marketRouter.get("/history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const rangeKey = String(req.query.range ?? "6M");
+  const requestedInterval = String(req.query.interval ?? "");
+  const intervals = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);
+  const interval = intervals.has(requestedInterval) ? requestedInterval : undefined;
   try {
-    const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
+    const data = await cached(`history:${symbol}:${rangeKey}:${interval ?? "auto"}`, HISTORY_TTL, () =>
       hyperliquid.parseSymbol(symbol)
-        ? hyperliquid.history(symbol, rangeKey)
+        ? hyperliquid.history(symbol, rangeKey, interval)
         : binance.parseFuturesSymbol(symbol)
-        ? binance.futuresHistory(symbol, rangeKey)
+        ? binance.futuresHistory(symbol, rangeKey, interval)
         : binance.CRYPTO_SYMBOLS.has(symbol)
-        ? binance.history(symbol, rangeKey)
+        ? binance.history(symbol, rangeKey, interval)
         : isVix(symbol)
-        ? vixHistory(rangeKey)
+        ? interval && interval !== "1d" && interval !== "1w"
+          ? Promise.reject(new Error(`VIX does not provide ${interval} candles`))
+          : vixHistory(rangeKey)
+        : interval && interval !== "1d"
+        ? yahoo.history(symbol, yahooRangeForInterval(rangeKey, interval).range, yahooRangeForInterval(rangeKey, interval).interval)
         : withFallback([
             ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
             ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],
@@ -312,7 +358,12 @@ marketRouter.get("/history/:symbol", async (req, res) => {
           ])
     );
     if (!Array.isArray(data) || data.length === 0) throw new Error("empty history from all providers");
-    res.json(data);
+    const candles = interval === "1w" && isVix(symbol)
+      ? resampleCandles(data, "1w")
+      : (interval === "2h" || interval === "4h") && !hyperliquid.parseSymbol(symbol) && !binance.parseFuturesSymbol(symbol) && !binance.CRYPTO_SYMBOLS.has(symbol) && !isVix(symbol)
+        ? resampleCandles(data, interval)
+        : data;
+    res.json(candles);
   } catch (err) {
     fail(req, res, err);
   }
@@ -433,6 +484,18 @@ marketRouter.get("/crypto", async (req, res) => {
     fail(req, res, err);
   }
 });
+
+function yahooRangeForInterval(rangeKey: string, interval: string): { range: string; interval: string } {
+  const base = yahooRange(rangeKey);
+  const yahooInterval = interval === "1w" ? "1wk" : interval === "2h" || interval === "4h" ? "1h" : interval;
+  // Yahoo Finance only retains a short window for intraday candles. Clamp the
+  // requested visible window instead of asking it for a range it cannot serve.
+  const requestedDays: Record<string, number> = { "1D": 1, "5D": 5, "1M": 30, "6M": 183, YTD: 366, "1Y": 366, "5Y": 1830, MAX: 3650 };
+  const days = requestedDays[rangeKey] ?? 183;
+  if (interval === "1m" && days > 7) return { range: "7d", interval: yahooInterval };
+  if (["2m", "5m", "15m", "30m", "60m", "1h", "90m"].includes(yahooInterval) && days > 60) return { range: "60d", interval: yahooInterval };
+  return { range: base.range, interval: yahooInterval };
+}
 
 marketRouter.get("/crypto/binance-futures", async (_req, res) => {
   try { res.json(await cached("binance:futures:markets", 60_000, () => binance.futuresMarkets())); }

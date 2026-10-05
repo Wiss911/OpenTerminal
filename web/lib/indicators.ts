@@ -27,12 +27,12 @@ export function ema(candles: Candle[], period: number): Point[] {
 export type ProfileLevels = { poc: number; vah: number; val: number };
 
 /**
- * Estimate volume-at-price by spreading each OHLCV bar's volume uniformly
- * across its high-low range. These are candle-derived estimates, not trade-
- * level volume profile values.
+ * Candle-based volume profile matching the community Price & Volume Profile
+ * approach: assign each candle's full volume to the bin containing its close.
+ * OHLC candles cannot reproduce trade-level volume at price.
  */
 export function volumeProfile(candles: Candle[], bins = 48): ProfileLevels | null {
-  const valid = candles.filter((c) => c.volume > 0 && Number.isFinite(c.low) && Number.isFinite(c.high));
+  const valid = candles.filter((c) => Number.isFinite(c.low) && Number.isFinite(c.high) && Number.isFinite(c.close) && Number.isFinite(c.volume) && c.volume > 0);
   if (!valid.length) return null;
   let low = Math.min(...valid.map((c) => c.low));
   let high = Math.max(...valid.map((c) => c.high));
@@ -41,10 +41,8 @@ export function volumeProfile(candles: Candle[], bins = 48): ProfileLevels | nul
   const step = (high - low) / bins;
   const volume = new Array<number>(bins).fill(0);
   for (const candle of valid) {
-    const first = Math.max(0, Math.min(bins - 1, Math.floor((candle.low - low) / step)));
-    const last = Math.max(first, Math.min(bins - 1, Math.floor((candle.high - low) / step)));
-    const share = candle.volume / (last - first + 1);
-    for (let i = first; i <= last; i++) volume[i] += share;
+    const index = Math.max(0, Math.min(bins - 1, Math.floor((candle.close - low) / step)));
+    volume[index] += candle.volume;
   }
   const pocIndex = volume.indexOf(Math.max(...volume));
   const target = volume.reduce((a, b) => a + b, 0) * 0.70;

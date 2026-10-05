@@ -90,8 +90,23 @@ const RANGE_TO_KLINE: Record<string, { interval: string; limit: number }> = {
   MAX: { interval: "1M", limit: 200 },
 };
 
-export async function history(symbol: string, rangeKey: string): Promise<Candle[]> {
-  const { interval, limit } = RANGE_TO_KLINE[rangeKey] ?? RANGE_TO_KLINE["6M"];
+const INTERVAL_MS: Record<string, number> = {
+  "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+  "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000,
+  "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000,
+  "1w": 604_800_000, "1M": 2_592_000_000,
+};
+
+function klineConfig(rangeKey: string, requestedInterval?: string) {
+  const fallback = RANGE_TO_KLINE[rangeKey] ?? RANGE_TO_KLINE["6M"];
+  if (!requestedInterval || !INTERVAL_MS[requestedInterval]) return fallback;
+  const rangeDays: Record<string, number> = { "1D": 1, "5D": 5, "1M": 30, "6M": 183, YTD: 366, "1Y": 366, "5Y": 1830, MAX: 3650 };
+  const duration = (rangeDays[rangeKey] ?? 183) * 86_400_000;
+  return { interval: requestedInterval, limit: Math.max(1, Math.min(1000, Math.ceil(duration / INTERVAL_MS[requestedInterval]))) };
+}
+
+export async function history(symbol: string, rangeKey: string, requestedInterval?: string): Promise<Candle[]> {
+  const { interval, limit } = klineConfig(rangeKey, requestedInterval);
   const pair = symbol.toUpperCase() + "USDT";
   const res = await fetch(
     `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${interval}&limit=${limit}`
@@ -166,10 +181,10 @@ export async function futuresQuote(input: string): Promise<Quote> {
   };
 }
 
-export async function futuresHistory(input: string, rangeKey: string): Promise<Candle[]> {
+export async function futuresHistory(input: string, rangeKey: string, requestedInterval?: string): Promise<Candle[]> {
   const symbol = parseFuturesSymbol(input);
   if (!symbol) throw new Error("invalid Binance futures symbol");
-  const { interval, limit } = RANGE_TO_KLINE[rangeKey] ?? RANGE_TO_KLINE["6M"];
+  const { interval, limit } = klineConfig(rangeKey, requestedInterval);
   const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`);
   if (!res.ok) throw new Error(`binance futures klines ${res.status}`);
   const rows = await res.json() as any[];
