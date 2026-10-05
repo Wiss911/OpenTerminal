@@ -18,6 +18,16 @@ export type ProfileBox = {
   text?: string;
   textColor?: string;
 };
+export type ProfileLine = {
+  time1: number;
+  time2: number;
+  price1: number;
+  price2: number;
+  color: string;
+  width?: number;
+  style?: "solid" | "dashed" | "dotted";
+  offsetBars?: number;
+};
 
 type Target = Parameters<IPrimitivePaneRenderer["draw"]>[0];
 type Attached = SeriesAttachedParameter<Time>;
@@ -26,10 +36,14 @@ type Attached = SeriesAttachedParameter<Time>;
 export class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
   private attachedParams: Attached | null = null;
   private boxes: ProfileBox[];
+  private lines: ProfileLine[];
+  private offsetBars: number;
   private readonly view: IPrimitivePaneView;
 
-  constructor(boxes: ProfileBox[]) {
+  constructor(boxes: ProfileBox[], lines: ProfileLine[] = [], offsetBars = 0) {
     this.boxes = boxes;
+    this.lines = lines;
+    this.offsetBars = offsetBars;
     this.view = {
       renderer: () => ({ draw: (target) => this.draw(target) }),
     };
@@ -48,16 +62,40 @@ export class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
     this.attachedParams?.requestUpdate();
   }
 
+  update(lines: ProfileLine[], offsetBars = this.offsetBars): void {
+    this.lines = lines;
+    this.offsetBars = offsetBars;
+    this.attachedParams?.requestUpdate();
+  }
+
   paneViews(): readonly IPrimitivePaneView[] {
     return [this.view];
   }
 
   private draw(target: Target): void {
     const attached = this.attachedParams;
-    if (!attached || this.boxes.length === 0) return;
+    if (!attached || (this.boxes.length === 0 && this.lines.length === 0)) return;
     const { chart, series } = attached;
     target.useBitmapCoordinateSpace((scope) => {
       const { context, horizontalPixelRatio: xRatio, verticalPixelRatio: yRatio } = scope;
+      for (const line of this.lines) {
+        if (![line.time1, line.time2, line.price1, line.price2].every(Number.isFinite)) continue;
+        const x1 = chart.timeScale().timeToCoordinate(line.time1 as Time);
+        const x2 = chart.timeScale().timeToCoordinate(line.time2 as Time);
+        const y1 = series.priceToCoordinate(line.price1);
+        const y2 = series.priceToCoordinate(line.price2);
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
+        const shift = (line.offsetBars ?? 0) * chart.timeScale().options().barSpacing;
+        context.beginPath();
+        context.strokeStyle = line.color;
+        context.lineWidth = Math.max(1, line.width ?? 1) * Math.min(xRatio, yRatio);
+        context.setLineDash(line.style === "dotted" ? [2 * xRatio, 3 * xRatio] : line.style === "dashed" ? [6 * xRatio, 4 * xRatio] : []);
+        context.moveTo((x1 + shift) * xRatio, y1 * yRatio);
+        context.lineTo((x2 + shift) * xRatio, y2 * yRatio);
+        context.stroke();
+      }
+      context.setLineDash([]);
+      const boxShift = this.offsetBars * chart.timeScale().options().barSpacing;
       for (const box of this.boxes) {
         if (![box.time1, box.time2, box.price1, box.price2].every(Number.isFinite)) continue;
         const x1 = chart.timeScale().timeToCoordinate(box.time1 as Time);
@@ -65,7 +103,7 @@ export class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
         const y1 = series.priceToCoordinate(box.price1);
         const y2 = series.priceToCoordinate(box.price2);
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
-        const left = Math.min(x1, x2) * xRatio;
+        const left = Math.min(x1, x2) * xRatio + boxShift * xRatio;
         const top = Math.min(y1, y2) * yRatio;
         const width = Math.max(1, Math.abs(x2 - x1) * xRatio);
         const height = Math.max(1, Math.abs(y2 - y1) * yRatio);
