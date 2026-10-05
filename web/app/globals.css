@@ -138,6 +138,34 @@
   --chart-accent-transparent: rgba(168, 74, 27, 0);
 }
 
+:root[data-theme="paper-dark"] {
+  color-scheme: dark;
+  --bg: #151515;
+  --panel: #1e1e1e;
+  --panel-2: #252525;
+  --border: #3b3b3b;
+  --amber: #d99a70;
+  --amber-dim: #9b694b;
+  --up: #78b89a;
+  --down: #d77d78;
+  --text: #d9d5ce;
+  --text-dim: #9a958d;
+  --hover: #2a2927;
+  --row-border: #302f2d;
+  --scroll-thumb: #55514c;
+  --selection: #38302a;
+  --call-bg: #24352d;
+  --put-bg: #3a2928;
+  --chart-grid: #343331;
+  --chart-text: #9a958d;
+  --chart-volume-up: rgba(120, 184, 154, 0.34);
+  --chart-volume-down: rgba(215, 125, 120, 0.34);
+  --chart-volume-up-strong: rgba(120, 184, 154, 0.55);
+  --chart-volume-down-strong: rgba(215, 125, 120, 0.55);
+  --chart-accent-soft: rgba(217, 154, 112, 0.22);
+  --chart-accent-transparent: rgba(217, 154, 112, 0);
+}
+
 html,
 body {
   background: var(--bg);

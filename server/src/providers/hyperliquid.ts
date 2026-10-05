@@ -1,5 +1,6 @@
 import type { CryptoRow } from "./coingecko.js";
 import type { Candle, Quote } from "./yahoo.js";
+import { tracked } from "./registry.js";
 
 const INFO_URL = "https://api.hyperliquid.xyz/info";
 
@@ -17,13 +18,15 @@ type OrderBook = { bids: [string, string][]; asks: [string, string][] };
 const orderBookCache = new Map<string, { expires: number; promise: Promise<OrderBook> }>();
 
 async function info<T>(body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(INFO_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  return tracked("hyperliquid", async () => {
+    const response = await fetch(INFO_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`hyperliquid ${response.status}`);
+    return response.json() as Promise<T>;
   });
-  if (!response.ok) throw new Error(`hyperliquid ${response.status}`);
-  return response.json() as Promise<T>;
 }
 
 function marketData(dex: string): Promise<MarketData> {

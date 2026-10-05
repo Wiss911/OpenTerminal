@@ -84,7 +84,8 @@ export default function TopBar() {
   });
 
   const market = marketStateNY();
-  const healthy = status?.providers.filter((p) => p.ok > 0) ?? [];
+  const feedNames: Record<string, string> = { hyperliquid: "HL", "binance-futures": "BF" };
+  const feeds = status?.providers.filter((p) => p.ok > 0 || p.name === "hyperliquid" || p.name === "binance-futures") ?? [];
 
   return (
     <header className="flex items-center gap-4 px-3 h-8 bg-[var(--panel-2)] border-b border-[var(--border)] text-[11px] shrink-0">
@@ -102,8 +103,8 @@ export default function TopBar() {
       </button>
       <span className="dim ml-auto">
         feeds:{" "}
-        {healthy.length > 0
-          ? healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
+        {feeds.length > 0
+          ? feeds.map((p) => `${feedNames[p.name] ?? p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
           : "connecting…"}
       </span>
       <select aria-label="Dashboard theme" value={theme} onChange={(e) => changeTheme(e.target.value)} title="Dashboard color theme">
@@ -112,6 +113,7 @@ export default function TopBar() {
         <option value="violet">Violet Night</option>
         <option value="graphite">Graphite Green</option>
         <option value="paper">Paper Light</option>
+        <option value="paper-dark">Paper Dark</option>
       </select>
       <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
     </header>

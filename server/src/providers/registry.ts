@@ -19,6 +19,11 @@ function getStats(name: string): ProviderStats {
   return s;
 }
 
+// Keep the two crypto derivatives feeds visible in the header even before
+// their first request has completed.
+getStats("hyperliquid");
+getStats("binance-futures");
+
 /** Run fn while recording latency/health for the named provider. */
 export async function tracked<T>(provider: string, fn: () => Promise<T>): Promise<T> {
   const s = getStats(provider);

@@ -270,7 +270,9 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const mainPaneHeight = chartRef.current?.panes()[0]?.getHeight();
-      setCountdownY(typeof mainPaneHeight === "number" ? Math.max(18, mainPaneHeight - 9) : null);
+      // Keep the countdown clear of the live-price badge and place it near
+      // the upper-middle of the scale, just below the 82.4k area in the UI.
+      setCountdownY(typeof mainPaneHeight === "number" ? Math.max(18, Math.round(mainPaneHeight * 0.52)) : null);
     });
     return () => cancelAnimationFrame(frame);
   }, [clockNow, candles, chartType, themeRevision]);

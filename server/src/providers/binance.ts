@@ -1,5 +1,6 @@
 import type { CryptoRow } from "./coingecko.js";
 import type { Quote, Candle } from "./yahoo.js";
+import { tracked } from "./registry.js";
 
 const NAMES: Record<string, string> = {
   BTCUSDT: "Bitcoin", ETHUSDT: "Ethereum", SOLUSDT: "Solana", BNBUSDT: "BNB",
@@ -132,18 +133,28 @@ export function parseFuturesSymbol(input: string): string | null {
 
 type FuturesSymbolInfo = { symbol: string; baseAsset: string; quoteAsset: string; contractType: string; status: string };
 let futuresInfoCache: { at: number; symbols: FuturesSymbolInfo[] } | null = null;
+async function futuresFetch(url: string): Promise<Response> {
+  return tracked("binance-futures", async () => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`binance futures ${response.status}`);
+    return response;
+  });
+}
+
 async function futuresExchangeSymbols(): Promise<FuturesSymbolInfo[]> {
   if (futuresInfoCache && Date.now() - futuresInfoCache.at < 300_000) return futuresInfoCache.symbols;
-  const res = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo");
-  if (!res.ok) throw new Error(`binance futures exchangeInfo ${res.status}`);
-  const payload = await res.json() as { symbols: FuturesSymbolInfo[] };
+  const payload = await tracked("binance-futures", async () => {
+    const res = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo");
+    if (!res.ok) throw new Error(`binance futures exchangeInfo ${res.status}`);
+    return res.json() as Promise<{ symbols: FuturesSymbolInfo[] }>;
+  });
   futuresInfoCache = { at: Date.now(), symbols: payload.symbols };
   return payload.symbols;
 }
 
 export async function futuresMarkets(): Promise<CryptoRow[]> {
   const [symbols, tickerRes] = await Promise.all([
-    futuresExchangeSymbols(), fetch("https://fapi.binance.com/fapi/v1/ticker/24hr"),
+    futuresExchangeSymbols(), futuresFetch("https://fapi.binance.com/fapi/v1/ticker/24hr"),
   ]);
   if (!tickerRes.ok) throw new Error(`binance futures ticker ${tickerRes.status}`);
   const tickers = await tickerRes.json() as Array<{ symbol: string; lastPrice: string; priceChangePercent: string; quoteVolume: string }>;
@@ -164,7 +175,7 @@ export async function futuresQuote(input: string): Promise<Quote> {
   const symbol = parseFuturesSymbol(input);
   if (!symbol) throw new Error("invalid Binance futures symbol");
   const [tickerRes, symbols] = await Promise.all([
-    fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${encodeURIComponent(symbol)}`),
+    futuresFetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${encodeURIComponent(symbol)}`),
     futuresExchangeSymbols(),
   ]);
   if (!tickerRes.ok) throw new Error(`binance futures ticker ${tickerRes.status}`);
@@ -185,7 +196,7 @@ export async function futuresHistory(input: string, rangeKey: string, requestedI
   const symbol = parseFuturesSymbol(input);
   if (!symbol) throw new Error("invalid Binance futures symbol");
   const { interval, limit } = klineConfig(rangeKey, requestedInterval);
-  const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`);
+  const res = await futuresFetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`);
   if (!res.ok) throw new Error(`binance futures klines ${res.status}`);
   const rows = await res.json() as any[];
   return rows.map((r) => ({ time: Math.round(r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[7] }));
@@ -194,7 +205,7 @@ export async function futuresHistory(input: string, rangeKey: string, requestedI
 export async function futuresOrderBook(input: string, limit = 20): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
   const symbol = parseFuturesSymbol(input);
   if (!symbol) throw new Error("invalid Binance futures symbol");
-  const res = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=${limit}`);
+  const res = await futuresFetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=${limit}`);
   if (!res.ok) throw new Error(`binance futures depth ${res.status}`);
   const d = await res.json();
   return { bids: d.bids ?? [], asks: d.asks ?? [] };
